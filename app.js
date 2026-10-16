@@ -25,6 +25,10 @@
     3: { color: "#f2b134", fill: 0.2 },
     4: { color: "#ff4d4d", fill: 0.26 },
   };
+  const TIER_DEFAULTS = { 2: "#4ea1ff", 3: "#f2b134", 4: "#ff4d4d" };
+  const loadTierColors = () => { try { const c = JSON.parse(localStorage.getItem("pz-tier-colors") || "{}"); for (const t of [2, 3, 4]) TIER_STYLE[t].color = c[t] || TIER_DEFAULTS[t]; } catch { /* private mode */ } };
+  const saveTierColors = () => { try { localStorage.setItem("pz-tier-colors", JSON.stringify({ 2: TIER_STYLE[2].color, 3: TIER_STYLE[3].color, 4: TIER_STYLE[4].color })); } catch { /* private mode */ } };
+  loadTierColors();
 
   // Point layers. Shape is used at overview zoom, the icon badge from `badge` zoom on.
   const VEHICLE_ICON = { VehicleTruck01: "truck", VehicleMotorbike: "motorbike", VehicleBoat: "sailboat",
@@ -228,6 +232,14 @@
 
   function drawSet(ctx, v, set) {
     const pad = 30 / v.k, batches = new Map(), badges = [];
+    // at overview zoom many marks land on the same pixels: keep the first per 2px cell
+    const cellPx = 2, cols = Math.ceil(v.w / cellPx) + 2, taken = set.xs.length > 2000 ? new Uint8Array(cols * (Math.ceil(v.h / cellPx) + 2)) : null;
+    const occupied = (px, py) => {
+      if (!taken || px < 0 || py < 0 || px > v.w || py > v.h) return false;
+      const i = Math.floor(py / cellPx) * cols + Math.floor(px / cellPx);
+      if (taken[i]) return true;
+      taken[i] = 1; return false;
+    };
     const first = set.uniform && (() => { for (let i = 0; i < set.xs.length; i++) { const st = set.style(i, v.z); if (st) return st; } return null; })();
     if (first) {   // same style for every drawn point: tiny dots go down as plain squares
       const st = first;
@@ -254,7 +266,7 @@
         set.near(v.x0 - pad, v.x1 + pad, v.zBot - pad, v.zTop + pad, (i) => {
           if (!set.style(i, v.z)) return;
           const px = ox + xs[i] * k, py = oy + (S - zs[i]) * k;
-          if (px > -4 && py > -4 && px < w + 4 && py < h + 4) ctx.fillRect(px - r, py - r, d, d);
+          if (px > -4 && py > -4 && px < w + 4 && py < h + 4 && !occupied(px, py)) ctx.fillRect(px - r, py - r, d, d);
         });
         ctx.globalAlpha = 1;
         return;
@@ -266,16 +278,18 @@
       const px = v.ox + set.xs[i] * v.k, py = v.oy + (v.S - set.zs[i]) * v.k;
       if (px < -30 || py < -30 || px > v.w + 30 || py > v.h + 30) return;
       if (st.icon) { badges.push([px, py, st]); return; }
+      if (st.r <= 2.4 && occupied(px, py)) return;
       const key = `${st.color}|${st.a ?? 1}|${st.outline || 0}|${st.o || 0}`;
       let b = batches.get(key);
       if (!b) batches.set(key, (b = { st, p: new Path2D() }));
       addShape(b.p, px, py, st);
     });
+    // outline first, fill on top: overlapping marks merge into one shape with a single outer edge
     const list = [...batches.values()].sort((a, b) => (a.st.o || 0) - (b.st.o || 0));
     for (const { st, p } of list) {
       ctx.globalAlpha = st.a ?? 1;
+      if (st.outline) { ctx.lineWidth = st.outline * 2; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.stroke(p); }
       ctx.fillStyle = st.color; ctx.fill(p);
-      if (st.outline) { ctx.lineWidth = st.outline; ctx.strokeStyle = "rgba(0,0,0,0.75)"; ctx.stroke(p); }
     }
     ctx.globalAlpha = 1;
     for (const [px, py, st] of badges) drawBadge(ctx, px, py, st);
@@ -372,7 +386,8 @@
       areas.infected = new AreaSet(D.zones.map(([x, z, r, t, lo, hi]) => ({ x, z, r, zt: D.zoneTypes[t], label: `${D.zoneTypes[t]} infected · ${lo}–${hi}` })),
         (it) => (isOff("infected", it.zt) ? null : "zone"));
     } else if (lid === "gas") {
-      areas.gas = new AreaSet(D.gas.map(([x, z, r, n]) => ({ x, z, r, label: `Gas zone${n ? ` · ${n.replace(/[-_]/g, " ")}` : ""}` })));
+      areas.gas = new AreaSet(D.gas.map(([x, z, r, n]) => ({ x, z, r, site: gasSite(n), label: `Gas zone${n ? ` · ${n.replace(/[-_]/g, " ")}` : ""}` })),
+        (it) => (isOff("gas", it.site) ? null : "zone"));
     } else if (lid === "gasevent") {
       areas.gasevent = new AreaSet((D.events.gasevent || []).flatMap((ev) => ev.p.map(([x, z]) => ({ x, z, r: ev.r || 75, label: "Random gas zone", ev }))));
     } else if (lid === "animals") {
@@ -484,7 +499,7 @@
       ]),
     };
 
-    layers.tierLabels = D.tierLabels.map(([t, x, z, r]) => ({ r, tip: L.tooltip({ permanent: true, direction: "center", className: `tier-label t${t}`, interactive: false })
+    layers.tierLabels = D.tierLabels.map(([t, x, z, r]) => ({ r, t, tip: L.tooltip({ permanent: true, direction: "center", className: `tier-label t${t}`, interactive: false })
       .setLatLng(ll(x, z)).setContent(`Tier ${t}`) }));
 
     // point sets
@@ -547,9 +562,9 @@
 
   function makeWorldSets() {
     for (const k of ["wells", "fruit", "berries"]) {
-      const a = W[k], xs = [], zs = [], kind = [], step = k === "wells" ? 2 : 3;
-      for (let i = 0; i < a.length; i += step) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
-      sets[k] = new PointSet(xs, zs, (i, z) => (isOff(k, W.kinds[kind[i]]) ? null : stylePlain(k, z)), { kind, uniform: true });
+      const a = W[k], xs = [], zs = [], kind = [], names = k === "wells" ? W.waterKinds : W.kinds;
+      for (let i = 0; i < a.length; i += 3) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
+      sets[k] = new PointSet(xs, zs, (i, z) => (isOff(k, names[kind[i]]) ? null : stylePlain(k, z)), { kind, names, uniform: true });
     }
     // one symbol per animal zone, from mid zoom; rest zones are shown by their circle alone
     const xs = [], zs = [], sp = [];
@@ -631,10 +646,11 @@
   function styleTierLabels() {
     if (!layers.tierLabels) return;
     const on = state.layers.has("tiers"), m = mpp();
-    for (const { r, tip } of layers.tierLabels) {
+    for (const { r, t, tip } of layers.tierLabels) {
       const show = on && r / m >= 34;
       if (show && !map.hasLayer(tip)) tip.addTo(map);
       else if (!show && map.hasLayer(tip)) map.removeLayer(tip);
+      if (show && t > 1) tip.getElement().style.borderColor = TIER_STYLE[t].color;
     }
   }
   function stylePlaces() {
@@ -669,7 +685,24 @@
   function worldEntries(k) {
     const counts = {};
     sets[k].kind.forEach((ki) => (counts[ki] = (counts[ki] || 0) + 1));
-    return Object.keys(counts).map((ki) => ({ k: W.kinds[ki], label: W.kinds[ki], n: counts[ki] }));
+    return Object.keys(counts).map((ki) => ({ k: sets[k].names[ki], label: sets[k].names[ki], n: counts[ki] }));
+  }
+  const gasSite = (n) => (n || "").split(/[-_ ]/)[0] || "Zone";
+
+  // Tier key: each swatch is a colour picker; a reset link appears once a colour is changed
+  function renderTierKey() {
+    const changed = [2, 3, 4].some((t) => TIER_STYLE[t].color !== TIER_DEFAULTS[t]);
+    $("#tier-key").innerHTML = `<span><i class="tk"></i>Tier 1</span>` + [2, 3, 4].filter((t) => (D.tiers[t] || []).length)
+      .map((t) => `<label title="Change colour"><i class="tk" style="--c:${TIER_STYLE[t].color}"></i>Tier ${t}<input type="color" value="${TIER_STYLE[t].color}" data-tier="${t}" aria-label="Tier ${t} colour"></label>`).join("")
+      + (changed ? `<button type="button" class="link" id="tier-reset">Reset colours</button>` : "");
+    $$("#tier-key input").forEach((inp) => (inp.oninput = () => {
+      TIER_STYLE[+inp.dataset.tier].color = inp.value;
+      inp.previousElementSibling.style.setProperty("--c", inp.value);
+      saveTierColors(); redraw(); styleTierLabels();
+      if (!$("#tier-reset")) renderTierKey();
+    }));
+    const reset = $("#tier-reset");
+    if (reset) reset.onclick = () => { for (const t of [2, 3, 4]) TIER_STYLE[t].color = TIER_DEFAULTS[t]; saveTierColors(); renderTierKey(); redraw(); styleTierLabels(); };
   }
 
   function buildPanel() {
@@ -687,8 +720,7 @@
     const counts = {};
     D.buildings.l.forEach((l) => (counts[l] = (counts[l] || 0) + 1));
     $("#loot-types").innerHTML = D.lootTypes.map(([k, label], i) => counts[i] ? chip("buildings", k, label, `<i class="sw" style="background:${LOOT_COLOR[k]}"></i>`) : "").join("");
-    $("#tier-key").innerHTML = `<span><i class="tk"></i>Tier 1</span>` + [2, 3, 4].filter((t) => (D.tiers[t] || []).length)
-      .map((t) => `<span><i class="tk" style="--c:${TIER_STYLE[t].color}"></i>Tier ${t}</span>`).join("");
+    renderTierKey();
 
     const sp = $("#spawn-layers");
     sp.replaceChildren();
@@ -714,7 +746,11 @@
         const zc = {};
         D.zones.forEach((z) => (zc[z[3]] = (zc[z[3]] || 0) + 1));
         wl.append(subChips("infected", D.zoneTypes.map((t, i) => ({ k: t, label: t, n: zc[i] || 0 })).filter((e) => e.n)));
-      } else if (lid === "fruit" || lid === "berries") wl.append(subChips(lid, W ? worldEntries(lid) : []));   // filled once world.json is loaded
+      } else if (lid === "gas") {
+        const gc = {};
+        D.gas.forEach((g) => (gc[gasSite(g[3])] = (gc[gasSite(g[3])] || 0) + 1));
+        wl.append(subChips("gas", Object.keys(gc).map((k) => ({ k, label: k, n: gc[k] }))));
+      } else if (["fruit", "berries", "wells"].includes(lid)) wl.append(subChips(lid, W ? worldEntries(lid) : []));   // filled once world.json is loaded
     }
 
     $$("#panel input[data-layer]").forEach((cb) => (cb.onchange = () => {
@@ -745,14 +781,14 @@
 
     if (["wells", "fruit", "berries", "animals"].some((k) => state.layers.has(k))) {
       await loadWorld();
-      for (const k of ["fruit", "berries"]) {
+      for (const k of ["fruit", "berries", "wells"]) {
         const sub = $(`.chips.sub[data-for="${k}"]`);
         if (sub && !sub.dataset.filled) { sub.dataset.filled = "1"; sub.replaceWith(subChips(k, worldEntries(k))); wireChips(); }
       }
     }
     for (const lid of Object.keys(AREAS)) if (state.layers.has(lid)) buildAreas(lid);
     const offSig = [...state.off].join();
-    for (const lid of ["animals", "infected"]) if (areas[lid] && areas[lid].sig !== offSig) { areas[lid].sig = offSig; areas[lid].invalidate(); }
+    for (const lid of ["animals", "infected", "gas"]) if (areas[lid] && areas[lid].sig !== offSig) { areas[lid].sig = offSig; areas[lid].invalidate(); }
 
     for (const cb of $$("#panel input[data-layer]")) cb.checked = state.layers.has(cb.dataset.layer);
     $$(".chips.sub").forEach((s) => (s.hidden = !state.layers.has(s.dataset.for) || !s.children.length));
@@ -855,7 +891,7 @@
     }
     if (D.events[k]) { const ev = D.events[k][sets[k].ref[i]]; return D.events[k].length > 1 ? eventLabel(k, ev) : D.eventLayers.find((l) => l[0] === k)[1]; }
     if (k === "spawns") return "Player spawn";
-    if (k === "wells") return "Water source";
+    if (k === "wells") return sets.wells.names[sets.wells.kind[i]];
     if (k === "animalPts") return W.animals[sets.animalPts.species[i]].n;
     return W.kinds[sets[k].kind[i]] + (k === "fruit" ? " tree" : " bush");
   }

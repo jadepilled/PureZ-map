@@ -58,7 +58,7 @@ ANIMALS = {"Cow": ("Cow", "cow"), "WildBoar": ("Wild boar", "boar"), "Sheep": ("
            "Fox": ("Fox", "fox"), "Wolf": ("Wolf", "wolf"), "Bear": ("Bear", "bear"), "Deer": ("Red deer", "reddeer"),
            "RedDeer": ("Red deer", "reddeer"), "RoeDeer": ("Roe deer", "roedeer"), "Pig": ("Pig", "pig"),
            "Monitor": ("Monitor lizard", "lizard"), "Lizard": ("Lizard", "lizard")}
-WELL = re.compile(r"(?i)well_?pump|^Land_.*_Well\b|Land_Well")
+WATER = [("Well pump", re.compile(r"(?i)well_?pump|^Land_.*_Well\b|Land_Well")), ("Water station", re.compile(r"(?i)^Land_Water_Station"))]
 ABBREV = {"Bttstck": "Buttstock", "Hndgrd": "Handguard"}
 
 
@@ -292,9 +292,10 @@ def main():
     bx, bz, bg, bt, bu, ba, bl = [], [], [], [], [], [], []
     wells = []
     for b in xml(os.path.join(m, "mapgrouppos.xml")).findall("group"):
-        if WELL.search(b.get("name")):
+        wk = next((i for i, (_, rx) in enumerate(WATER) if rx.search(b.get("name"))), None)
+        if wk is not None:
             x, _y, z = (float(v) for v in b.get("pos").split())
-            wells.append([round(x), round(z)])
+            wells.append([round(x), round(z), wk])
         gi = gindex.get(b.get("name"))
         if gi is None:
             continue
@@ -402,7 +403,7 @@ def main():
             (fruit if f else berries).append([round(x), round(z), kinds.index(k)])
     animals, animal_zones = territories(m)
     flat = lambda pts: [v for p in pts for v in p]
-    world = {"wells": flat(wells), "fruit": flat(fruit), "berries": flat(berries), "kinds": kinds,
+    world = {"wells": flat(wells), "waterKinds": [k for k, _ in WATER], "fruit": flat(fruit), "berries": flat(berries), "kinds": kinds,
              "animals": animals, "animalZones": animal_zones}
     with open(os.path.join(out, "world.json"), "w", encoding="utf-8") as f:
         json.dump(world, f, separators=(",", ":"))
