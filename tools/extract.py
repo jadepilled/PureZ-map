@@ -1,9 +1,10 @@
 """Build map data from a DayZ mission folder.
 
     python tools/extract.py --id nasdara --name Nasdara --mission <PureZ mission> --areaflags <areaflags.map>
-                            [--cetool <CETool map folder>] [--names <names.json>]
+                            [--cetool <CETool map folder>] [--names <wiki _site/static/names.json>]
 
-Writes maps/<id>/data.json plus overlay images (loot tiers, usage areas, water).
+Writes maps/<id>/data.json (loot, tiers, spawns), maps/<id>/world.json (wells, fruit trees,
+berry bushes, animal territories; loaded when those layers are switched on) and overlay images.
 Everything comes from the mission files the server runs: buildings and their loot
 points (mapgrouppos/mapgroupproto), loot rules (types.xml, cfglimitsdefinition),
 tier and usage areas (areaflags.map), events, infected areas, gas zones and spawns.
@@ -11,6 +12,7 @@ tier and usage areas (areaflags.map), events, infected areas, gas zones and spaw
 import argparse, json, os, re, struct, sys
 import xml.etree.ElementTree as ET
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -27,11 +29,31 @@ EVENT_LAYERS = [  # (layer id, label, event name pattern)
     ("helicrash", "Heli crashes", r"^StaticHeliCrash"),
     ("convoy", "Military convoys", r"^StaticMilitaryConvoy"),
     ("police", "Police wrecks", r"^StaticPolice"),
+    ("watertruck", "Water trucks", r"^StaticWaterTruck"),
     ("containers", "Locked containers", r"^StaticContainerLocked"),
+    ("crates", "Airdrop crates", r"^StaticAirplaneCrate"),
     ("trains", "Train wrecks", r"^StaticTrain"),
+    ("supplies", "Planks and bricks", r"^Item(Planks|Bricks)"),
+    ("gasevent", "Random gas zones", r"^StaticContaminatedArea"),
 ]
-TIER_ALPHA = [0, 0.10, 0.22, 0.36, 0.52]  # by highest tier bit; red ramp
-ABBREV = {"Bttstck": "Buttstock", "Hndgrd": "Handguard", "Rnd": " rnd", "Mag": "Magazine"}
+# Building loot type for colouring: the first matching usage wins, so a barn that is Farm and Industrial reads as Farm
+LOOT_TYPES = [
+    ("military", "Military", ["Military", "MilitaryEast", "MilitaryWest"]),
+    ("police", "Police", ["Police", "Prison"]),
+    ("medic", "Medical", ["Medic"]),
+    ("fire", "Firefighter", ["Firefighter"]),
+    ("hunting", "Hunting", ["Hunting"]),
+    ("farm", "Farm", ["Farm"]),
+    ("coast", "Coast", ["Coast"]),
+    ("town", "Town", ["Town", "Office", "School", "Lunapark"]),
+    ("industrial", "Industrial", ["Industrial"]),
+    ("village", "Village", ["Village"]),
+    ("other", "Other", []),
+]
+FRUIT = re.compile(r"^(Apple|Pear|Plum|Fig|Cherry|Peach)Tree")
+BERRIES = re.compile(r"^(Sambucus|Canina)Bush")
+WELL = re.compile(r"(?i)well_?pump|^Land_.*_Well\b|Land_Well")
+ABBREV = {"Bttstck": "Buttstock", "Hndgrd": "Handguard"}
 
 
 def xml(path):
@@ -39,14 +61,35 @@ def xml(path):
 
 
 def humanize(cls):
+    """Class name to words without breaking model codes: M4A1 stays M4A1, BoonieHat -> Boonie Hat."""
     s = re.sub(r"^Land_", "", cls)
     s = re.sub(r"_(?=[A-Z0-9])", " ", s)
     s = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", s)
-    s = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", s)
+    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
+    s = re.sub(r"(?<=[a-z]{2})(?=\d)", " ", s)
     s = s.replace("_", " ")
     for a, b in ABBREV.items():
         s = re.sub(rf"\b{a}\b", b, s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def sentence(t):
+    """Sentence case that keeps acronyms and model codes: 'Barbed Wire' -> 'Barbed wire', 'M4A1' stays."""
+    words = t.split(" ")
+    return " ".join(w if i == 0 or not re.fullmatch(r"[A-Z][a-z]+", w) else w.lower() for i, w in enumerate(words))
+
+
+BUILDING_WORDS = {"Mil": "Military", "Misc": "", "Static": "", "Obj": "", "aban": "", "Aban": "", "hb": "Hatchback",
+                  "sed": "Sedan", "Ind": "Industrial", "DE": "", "TK": "", "Takistan": "", "Enoch": ""}
+
+
+def building_name(cls):
+    words = humanize(re.sub(r"^(Land_|StaticObj_)", "", cls)).split(" ")
+    words = [BUILDING_WORDS.get(w, w) for w in words]
+    s = " ".join(w for w in words if w)
+    s = re.sub(r"\bDam \d\b", "(damaged)", s)
+    s = s[:1].upper() + s[1:]
+    return sentence(re.sub(r"\s+", " ", s).strip())
 
 
 COLOUR = re.compile(r"(?i)(black|white|blue|green|red|yellow|orange|brown|gr[ae]y|beige|pink|violet|purple|olive|khaki|tan|"
@@ -56,23 +99,28 @@ COLOUR = re.compile(r"(?i)(black|white|blue|green|red|yellow|orange|brown|gr[ae]
                     r"flowers|polka|blackskull|skull|pig|chain|scarred|yellowscarred)")
 
 
-def group_variants(items):
-    """Merge colour variants (Hoodie_Blue, Hoodie_Red...) that follow identical loot rules into one entry."""
+def group_variants(items, names):
+    """One entry per item family: colour variants (Hoodie_Blue, Hoodie_Red...) share an entry, and each
+    entry keeps every distinct loot rule [usage, tier, category, tag] its members spawn by."""
     fams = {}
     for it in items:
         base, _, suffix = it["c"].rpartition("_")
         if not base or not COLOUR.fullmatch(suffix):
             base = it["c"]
-        fams.setdefault((base, it["u"], it["v"], it["k"], it["t"]), []).append(it)
+        fams.setdefault(base, []).append(it)
     out = []
-    for (base, *_), group in fams.items():
-        if len(group) == 1:
-            out.append(group[0])
-            continue
+    for base, group in fams.items():
         first = group[0]
-        name = humanize(base)
-        out.append({**first, "c": base, "n": name, "q": sum(g["q"] for g in group),
-                    "vars": [[g["c"], g["n"].replace(name, "").strip() or g["c"]] for g in group]})
+        rules = []
+        for g in group:
+            r = [g["u"], g["v"], g["k"], g["t"]]
+            if r not in rules:
+                rules.append(r)
+        e = {"c": base if len(group) > 1 else first["c"], "n": first["n"], "q": sum(g["q"] for g in group), "r": rules}
+        if len(group) > 1:
+            e["n"] = names.get(base) or names.get(first["c"]) or sentence(humanize(base))
+            e["vars"] = [[g["c"], humanize(g["c"][len(base) + 1:]) or g["c"]] for g in group]
+        out.append(e)
     return out
 
 
@@ -101,26 +149,98 @@ def read_areaflags(path):
     return {"w": w, "h": h, "size": sx, "usage": usage, "value": value}
 
 
-def overlay_tiers(af, out, px=2048):
-    v = af["value"][::-1]  # north at the top
+def loot_type(mask_, usages):
+    names = {u for i, u in enumerate(usages) if mask_ >> i & 1}
+    for k, (_, _, us) in enumerate(LOOT_TYPES):
+        if names & set(us):
+            return k
+    return len(LOOT_TYPES) - 1
+
+
+def tier_shapes(af, min_cells=40):
+    """Outline each loot tier area as polygons (metres), plus a label point inside each larger area.
+
+    Returns ({tier: [[ring, hole, ...], ...]}, [[tier, x, z, area_m2], ...]) and writes nothing."""
+    v = af["value"]
+    cell = af["size"] / af["w"]
     tier = np.zeros(v.shape, np.uint8)
     for bit, t in ((1, 1), (2, 2), (4, 3), (8, 4)):
         tier[(v & bit) > 0] = t
-    alpha = (np.array(TIER_ALPHA)[tier] * 255).astype(np.uint8)
-    rgba = np.zeros(v.shape + (4,), np.uint8)
-    rgba[..., 0], rgba[..., 1], rgba[..., 2], rgba[..., 3] = 209, 26, 26, alpha
-    Image.fromarray(rgba, "RGBA").resize((px, px), Image.NEAREST).save(out, optimize=True)
+    kernel = np.ones((3, 3), np.uint8)
+    shapes, labels = {}, []
+    for t in (1, 2, 3, 4):
+        m = (tier == t).astype(np.uint8)
+        m = cv2.morphologyEx(cv2.morphologyEx(m, cv2.MORPH_CLOSE, kernel), cv2.MORPH_OPEN, kernel)
+        contours, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if hier is None:
+            continue
+        hier = hier[0]
+        polys = []
+        to_m = lambda c: [[round((p[0][0] + 0.5) * cell), round((p[0][1] + 0.5) * cell)] for p in cv2.approxPolyDP(c, 1.2, True)]
+        for i, c in enumerate(contours):
+            if hier[i][3] != -1 or cv2.contourArea(c) < min_cells:
+                continue
+            rings = [to_m(c)]
+            j = hier[i][2]
+            while j != -1:
+                if cv2.contourArea(contours[j]) >= min_cells:
+                    rings.append(to_m(contours[j]))
+                j = hier[j][0]
+            if len(rings[0]) >= 3:
+                polys.append(rings)
+            # label at the point furthest from the edge
+            x0, y0, w, h = cv2.boundingRect(c)
+            sub = np.zeros((h + 2, w + 2), np.uint8)
+            cv2.drawContours(sub, [c - [x0 - 1, y0 - 1]], -1, 1, -1)
+            sub &= np.pad(m[y0:y0 + h, x0:x0 + w], 1)
+            dist = cv2.distanceTransform(sub, cv2.DIST_L2, 3)
+            _, dmax, _, (px, py) = cv2.minMaxLoc(dist)
+            if dmax * cell >= 25:
+                labels.append([t, round((x0 - 1 + px + 0.5) * cell), round((y0 - 1 + py + 0.5) * cell), round(dmax * cell)])
+        shapes[t] = polys
+    return shapes, labels
 
 
-def overlay_usage(af, bit, out, px=1024):
-    m = ((af["usage"][::-1] >> bit) & 1).astype(np.uint8) * 255
-    img = Image.fromarray(m, "L").resize((px, px), Image.NEAREST)
-    if not img.getbbox():
-        return False
-    rgba = Image.new("RGBA", img.size, (255, 255, 255, 0))
-    rgba.putalpha(img.point(lambda a: 120 if a else 0))
-    rgba.save(out, optimize=True)
-    return True
+def tier_grid(af, out, px=1024):
+    """Greyscale lookup image (tier x 60) so the map can show the tier under the cursor."""
+    v = af["value"][::-1]
+    tier = np.zeros(v.shape, np.uint8)
+    for bit, t in ((1, 1), (2, 2), (4, 3), (8, 4)):
+        tier[(v & bit) > 0] = t
+    Image.fromarray(tier * 60, "L").resize((px, px), Image.NEAREST).save(out, optimize=True)
+
+
+def territories(m):
+    """Animal territories from cfgenvironment.xml: [{n: species, z: [[x, z, r, zone type], ...]}]."""
+    env = xml(os.path.join(m, "cfgenvironment.xml"))
+    if env is None:
+        return [], []
+    files = {os.path.splitext(os.path.basename(f.get("path")))[0] for f in env.iter("file") if f.get("path")}
+    zone_types, out = [], []
+    for t in env.iter("territory"):
+        name = t.get("name")
+        if not name or "zombie" in name.lower() or "infected" in name.lower():
+            continue
+        zs = []
+        for f in t.findall("file"):
+            u = f.get("usable")
+            root = xml(os.path.join(m, "env", f"{u}.xml")) if u in files else None
+            if root is None:
+                continue
+            for z in root.iter("zone"):
+                zt = z.get("name") or "Zone"
+                if zt not in zone_types:
+                    zone_types.append(zt)
+                zs.append([round(float(z.get("x"))), round(float(z.get("z"))), round(float(z.get("r"))), zone_types.index(zt)])
+        if zs:
+            label = re.sub(r"^Ambient", "", name)
+            label = {"Cow": "Cows", "WildBoar": "Wild boar", "Sheep": "Sheep", "Goat": "Goats", "Mouflon": "Mouflon",
+                     "Dog": "Dogs", "Hen": "Chickens", "Hare": "Hares", "Fox": "Foxes", "Wolf": "Wolves", "Bear": "Bears",
+                     "Deer": "Red deer", "RedDeer": "Red deer", "RoeDeer": "Roe deer", "Pig": "Pigs", "Monitor": "Monitor lizards",
+                     "Lizard": "Lizards"}.get(label, humanize(label))
+            prev = next((o for o in out if o["n"] == label), None)
+            (prev["z"].extend(zs) if prev else out.append({"n": label, "c": name, "z": zs}))
+    return out, zone_types
 
 
 def main():
@@ -135,7 +255,7 @@ def main():
     ap.add_argument("--world", help="CfgWorlds class name, e.g. ChernarusPlus")
     a = ap.parse_args()
     out = os.path.join(OUT, a.id)
-    os.makedirs(os.path.join(out, "usage"), exist_ok=True)
+    os.makedirs(out, exist_ok=True)
     m = a.mission
     lim = limits(m)
     af = read_areaflags(a.areaflags)
@@ -157,10 +277,14 @@ def main():
         if not conts:
             continue
         gindex[g.get("name")] = len(groups)
-        groups.append({"n": humanize(g.get("name")), "u": mask([x.get("name") for x in g.findall("usage")], lim["usages"]),
+        groups.append({"n": building_name(g.get("name")), "cls": g.get("name"), "u": mask([x.get("name") for x in g.findall("usage")], lim["usages"]),
                        "v": mask([x.get("name") for x in g.findall("value")], lim["values"]), "c": conts})
-    bx, bz, bg, bt, bu, ba = [], [], [], [], [], []
+    bx, bz, bg, bt, bu, ba, bl = [], [], [], [], [], [], []
+    wells = []
     for b in xml(os.path.join(m, "mapgrouppos.xml")).findall("group"):
+        if WELL.search(b.get("name")):
+            x, _y, z = (float(v) for v in b.get("pos").split())
+            wells.append([round(x), round(z)])
         gi = gindex.get(b.get("name"))
         if gi is None:
             continue
@@ -171,6 +295,7 @@ def main():
         bx.append(round(x)), bz.append(round(z)), bg.append(gi)
         bt.append(int(af["value"][row, col])), bu.append(int(af["usage"][row, col]))
         ba.append(round(float(b.get("a", 0))))
+        bl.append(loot_type(groups[gi]["u"] or bu[-1], lim["usages"]))
 
     # ---- items that spawn in buildings
     items = []
@@ -181,11 +306,11 @@ def main():
         if nom <= 0 or not usage or cat is None or cat.get("name") not in lim["categories"]:
             continue
         cls = t.get("name")
-        items.append({"c": cls, "n": names.get(cls) or humanize(cls), "u": mask(usage, lim["usages"]),
+        items.append({"c": cls, "n": names.get(cls) or sentence(humanize(cls)), "u": mask(usage, lim["usages"]),
                       "v": mask([v.get("name") for v in t.findall("value")], lim["values"]),
                       "k": lim["categories"].index(cat.get("name")),
                       "t": mask([v.get("name") for v in t.findall("tag")], lim["tags"]), "q": nom})
-    items = group_variants(items)
+    items = group_variants(items, names)
     items.sort(key=lambda i: i["n"].lower())
 
     # ---- events (only those active on this server)
@@ -195,14 +320,22 @@ def main():
     for e in spawns.findall("event"):
         name = e.get("name")
         cfg = ev_cfg.get(name)
-        if cfg is None or cfg.findtext("active") != "1" or int(cfg.findtext("nominal") or 0) <= 0:
-            continue
         lid = next((l for l, _, rx in EVENT_LAYERS if re.search(rx, name)), None)
+        if cfg is None or cfg.findtext("active") != "1" or not lid:
+            continue
+        nominal = int(cfg.findtext("nominal") or 0)
+        if nominal <= 0 and lid != "gasevent":  # dynamic gas runs on min/max with a nominal of 0
+            continue
         pos = [[round(float(p.get("x"))), round(float(p.get("z")))] for p in e.findall("pos")]
-        if not lid or not pos:
+        if not pos:
             continue
         label = VEHICLE_NAMES.get(name, humanize(name.replace("Vehicle", ""))) if lid == "vehicles" else None
-        layers.setdefault(lid, []).append({"type": label, "count": int(cfg.findtext("nominal")), "p": pos})
+        kids = sorted({c.get("type") for c in cfg.iter("child") if c.get("type")})
+        ev = {"type": label, "cls": name, "count": nominal or int(cfg.findtext("max") or 0), "kids": kids, "p": pos}
+        zone = e.find("zone")
+        if lid == "gasevent" and zone is not None:
+            ev["r"] = round(float(zone.get("r", 75)))
+        layers.setdefault(lid, []).append(ev)
 
     # ---- infected areas
     zt = xml(os.path.join(m, "env/zombie_territories.xml"))
@@ -224,20 +357,45 @@ def main():
             for ar in json.load(open(p)).get("Areas", []):
                 if "Contaminated" in ar.get("Type", "") and ar.get("Data", {}).get("Pos"):
                     x, _, z = ar["Data"]["Pos"]
-                    gas.append([round(x), round(z), round(ar["Data"].get("Radius", 50))])
+                    gas.append([round(x), round(z), round(ar["Data"].get("Radius", 50)), ar.get("AreaName", "")])
             break
     pspawn = xml(os.path.join(m, "cfgplayerspawnpoints.xml"))
     fresh = [[round(float(p.get("x"))), round(float(p.get("z")))] for p in pspawn.find("fresh").iter("pos")] if pspawn is not None else []
 
     # ---- overlays
-    overlay_tiers(af, os.path.join(out, "tiers.png"))
-    usage_layers = [u for i, u in enumerate(lim["usages"]) if overlay_usage(af, i, os.path.join(out, "usage", f"{u}.png"))]
+    shapes, tier_labels = tier_shapes(af)
+    tier_grid(af, os.path.join(out, "tiergrid.png"))
+    if os.path.exists(os.path.join(out, "tiers.png")):
+        os.remove(os.path.join(out, "tiers.png"))
     water = None
     if a.cetool and os.path.exists(os.path.join(a.cetool, "layers", "water-sea.tga")):
         sea = read_tga(os.path.join(a.cetool, "layers", "water-sea.tga")) > 0
         img = Image.fromarray(np.where(sea, 255, 0).astype(np.uint8), "L").resize((2048, 2048), Image.BILINEAR)
         img.save(os.path.join(out, "water.png"), optimize=True)
         water = "water.png"
+
+    # ---- world layers: wells, fruit trees and berry bushes (cluster files), animal territories
+    fruit, berries = [], []
+    kinds = []
+    for fn in sorted(os.listdir(m)):
+        if not re.match(r"mapgroupcluster\d*\.xml$", fn):
+            continue
+        for g in ET.parse(os.path.join(m, fn)).getroot().iter("group"):
+            n = g.get("name") or ""
+            f, b = FRUIT.match(n), BERRIES.match(n)
+            if not (f or b):
+                continue
+            k = (f or b).group(1)
+            if k not in kinds:
+                kinds.append(k)
+            x, _y, z = (float(v) for v in g.get("pos").split())
+            (fruit if f else berries).append([round(x), round(z), kinds.index(k)])
+    animals, animal_zones = territories(m)
+    flat = lambda pts: [v for p in pts for v in p]
+    world = {"wells": flat(wells), "fruit": flat(fruit), "berries": flat(berries), "kinds": kinds,
+             "animals": animals, "animalZones": animal_zones}
+    with open(os.path.join(out, "world.json"), "w", encoding="utf-8") as f:
+        json.dump(world, f, separators=(",", ":"))
 
     places = []
     if a.configs and a.world:
@@ -249,16 +407,21 @@ def main():
 
     data = {
         "id": a.id, "places": places, "name": a.name, "size": size, "limits": lim,
-        "groups": groups, "buildings": {"x": bx, "z": bz, "g": bg, "t": bt, "u": bu, "a": ba},
+        "groups": groups, "buildings": {"x": bx, "z": bz, "g": bg, "t": bt, "u": bu, "a": ba, "l": bl},
+        "lootTypes": [[k, label] for k, label, _ in LOOT_TYPES],
+        "tiers": shapes, "tierLabels": tier_labels,
+        "world": {"wells": len(wells), "fruit": len(fruit), "berries": len(berries),
+                  "animals": [[a["n"], len(a["z"])] for a in animals]},
         "items": items, "events": layers, "eventLayers": [[l, label] for l, label, _ in EVENT_LAYERS if l in layers],
         "zoneTypes": ztypes, "zones": zones, "gas": gas, "spawns": fresh,
-        "overlays": {"tiers": "tiers.png", "usage": usage_layers, "water": water},
+        "overlays": {"tiergrid": "tiergrid.png", "water": water},
     }
     with open(os.path.join(out, "data.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, separators=(",", ":"))
     print(f"{a.id}: {len(bx)} buildings, {len(groups)} building types, {len(items)} items,",
           {k: sum(len(e['p']) for e in v) for k, v in layers.items()}, f"{len(zones)} infected areas, {len(gas)} gas zones,",
-          f"{len(fresh)} spawns, usage overlays {usage_layers}")
+          f"{len(fresh)} spawns, {len(wells)} wells, {len(fruit)} fruit trees, {len(berries)} bushes,",
+          f"animals {[(a['n'], len(a['z'])) for a in animals]}, tier polygons {[(t, len(p)) for t, p in shapes.items()]}, {len(tier_labels)} tier labels")
 
 
 if __name__ == "__main__":

@@ -8,12 +8,16 @@ Everything comes from the mission files each server runs:
 
 | Layer | Source |
 |---|---|
-| Loot buildings and per-building loot | `mapgrouppos.xml`, `mapgroupproto.xml` |
+| Loot buildings, coloured by loot type, and per-building loot | `mapgrouppos.xml`, `mapgroupproto.xml` |
 | Item lookup (where an item can spawn) | `types.xml` rules matched against each building's containers, usage and area tier |
-| Loot tiers and area types | `areaflags.map` |
-| Vehicles, heli crashes, convoys, wrecks | `db/events.xml` (active events only) + `cfgeventspawns.xml` |
+| Loot tier outlines | `areaflags.map` |
+| Vehicles, heli crashes, convoys, wrecks, crates, planks and bricks, random gas zones | `db/events.xml` (active events only) + `cfgeventspawns.xml` |
+| Wells | `mapgrouppos.xml` (well pumps) |
+| Fruit trees, berry bushes | `mapgroupcluster*.xml` |
+| Animals | `cfgenvironment.xml` + `env/*_territories.xml` |
 | Infected areas | `env/zombie_territories.xml` |
 | Gas zones, player spawns | `cfgeffectarea.json`, `cfgplayerspawnpoints.xml` |
+| Item names | the wiki's `names.json` |
 | Place names | world config `CfgWorlds <World> Names` (via the wiki's config extractor) |
 
 ## Updating a map
@@ -21,8 +25,11 @@ Everything comes from the mission files each server runs:
 ```sh
 python tools/extract.py --id nasdara --name Nasdara --mission ../PureZ/PureZ.nasdara \
     --areaflags ../PureZ/PureZ.nasdara/areaflags.map \
+    --names ../PureZ-wiki/_site/static/names.json \
     --configs ../PureZ-wiki/data/configs.json --world <CfgWorlds class>
 ```
+
+This writes `maps/<id>/data.json`, `world.json` (loaded when a world layer is switched on) and `tiergrid.png` (tier under the cursor).
 
 Add `--cetool <CE tool folder>` for maps whose CE tool project includes a sea mask.
 
@@ -38,4 +45,4 @@ Then list the layer in that map's `base` array in `maps.json` (and its deepest z
 
 Run the extractor with a new `--id`, add an entry to `maps.json`, and it appears as a tab.
 
-Chernarus satellite image and economy data © Bohemia Interactive, used under ADPL-SA.
+Chernarus satellite image and economy data © Bohemia Interactive, used under ADPL-SA. Icons from [Tabler Icons](https://tabler.io/icons), MIT License.
