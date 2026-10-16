@@ -78,6 +78,10 @@
   // An item can spawn at a building if: its usage matches the building's usage (or the area's, when the
   // building type has none), its tier matches the area's tier (items without tiers spawn anywhere), and
   // a container in the building accepts its category and, for tagged items, its tag.
+  function findItem(cls) {
+    return cls && D.items.find((x) => x.c === cls || (x.vars && x.vars.some((v) => (Array.isArray(v) ? v[0] : v) === cls)));
+  }
+
   function itemPoints(item, i) {
     const B = D.buildings, g = D.groups[B.g[i]];
     if (!((g.u || B.u[i]) & item.u)) return 0;
@@ -358,7 +362,7 @@
     let html = "";
     const nb = state.hits ? state.hits.reduce((s, p) => s + (p > 0), 0) : 0;
     if (state.item) {
-      const it = D.items.find((x) => x.c === state.item);
+      const it = findItem(state.item);
       if (!it) { card.hidden = true; return; }
       const pts = state.hits.reduce((s, p) => s + p, 0);
       const tiers = bits(it.v, D.limits.values);
@@ -407,7 +411,7 @@
     const el = popup.getElement();
     if (!el) return;
     $$("[data-copy]", el).forEach((c) => (c.onclick = () => copy(c.dataset.copy, "Coordinates copied")));
-    $$("[data-item]", el).forEach((li) => (li.onclick = () => { map.closePopup(); selectItem(D.items.find((x) => x.c === li.dataset.item)); }));
+    $$("[data-item]", el).forEach((li) => (li.onclick = () => { map.closePopup(); selectItem(findItem(li.dataset.item)); }));
     $$("[data-type]", el).forEach((a) => (a.onclick = (e) => { e.preventDefault(); map.closePopup(); selectType(+a.dataset.type); }));
     const f = $(".list input", el);
     if (f) f.oninput = () => { const w = f.value.toLowerCase(); $$("li", el).forEach((li) => (li.hidden = w && !li.textContent.toLowerCase().includes(w))); };
@@ -595,7 +599,7 @@
     drawMarkers();
     if (p.get("x")) map.setView(ll(+p.get("x"), +p.get("y")), +p.get("z") || 2);
     else fitAll();
-    if (p.get("i")) { const it = D.items.find((x) => x.c === p.get("i")); if (it) { selectItem(it); if (p.get("x")) map.setView(ll(+p.get("x"), +p.get("y")), +p.get("z")); } }
+    if (p.get("i")) { const it = findItem(p.get("i")); if (it) { selectItem(it); if (p.get("x")) map.setView(ll(+p.get("x"), +p.get("y")), +p.get("z")); } }
   }
   function resetState(p) {
     p = p || new URLSearchParams();
