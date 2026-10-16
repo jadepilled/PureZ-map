@@ -56,6 +56,15 @@
   const LABEL = { spawns: "Player spawns", wells: "Water sources", fruit: "Fruit trees", berries: "Berry bushes", animals: "Animals",
                   infected: "Infected areas", gas: "Gas zones" };
   const MOBILE = () => innerWidth <= 760;
+  const isOff = (lid, key) => state.off.has(`${lid}:${key}`);
+  // "StaticObj_Wreck_Mi24_TK_DE" -> "Mi-24"; what an event spawns, for its filter chip
+  const KID_NAMES = { Mi8: "Mi-8", Mi24: "Mi-24", UH1Y: "UH-1Y", Chinook: "Chinook", UAZ: "UAZ", Truck01: "Truck", C130J: "C-130J" };
+  const kidName = (k) => {
+    const t = k.replace(/^(StaticObj_|Land_|Wreck_)+/, "").replace(/_(Crashed|DE|TK|Aban\d|Police|Cistern|Green|Locked)/g, "").replace(/^Wreck_?/, "");
+    const head = t.split("_")[0];
+    return KID_NAMES[head] || cap(t.replace(/_/g, " "));
+  };
+  const eventLabel = (lid, ev) => ev.type || [...new Set(ev.kids.map(kidName))].join(" / ") || cap(ev.cls.replace(/^Static/, "").replace(/([a-z])([A-Z])/g, "$1 $2"));
   const MARKER_COLORS = ["#f2f2f2", "#ff4545", "#3987e5", "#c98500", "#199e70"];
   const MARKER_ICONS = ["map-pin", "home", "car", "key", "tent", "package", "flag", "star", "crosshair", "skull",
                         "droplet", "first-aid-kit", "campfire", "alert-triangle", "eye", "building-warehouse"];
@@ -219,18 +228,19 @@
 
   function drawSet(ctx, v, set) {
     const pad = 30 / v.k, batches = new Map(), badges = [];
-    if (set.uniform && set.style(0, v.z)) {   // same style for every point: draw tiny dots as squares straight away
-      const st = set.style(0, v.z);
+    const first = set.uniform && (() => { for (let i = 0; i < set.xs.length; i++) { const st = set.style(i, v.z); if (st) return st; } return null; })();
+    if (first) {   // same style for every drawn point: tiny dots go down as plain squares
+      const st = first;
       // dense layers at overview zoom: draw once per half zoom step into a whole-map image, then just place it
       if (!st.icon && v.z < 3.5 && set.xs.length > 5000) {
-        const cz = Math.round(v.z * 2) / 2, cst = set.style(0, cz), key = `${cz}|${cst.color}|${cst.a}`;
+        const cz = Math.round(v.z * 2) / 2, cst = st, key = `${cz}|${cst.color}|${cst.a}|${[...state.off].join()}`;
         if (set.cacheKey !== key) {
           const n = Math.round(256 * 2 ** cz), kc = n / D.size, r = cst.r, d = r * 2;
           const c = set.cache || (set.cache = document.createElement("canvas"));
           c.width = c.height = n;
           const cx = c.getContext("2d");
           cx.fillStyle = cst.color;
-          for (let i = 0; i < set.xs.length; i++) cx.fillRect(set.xs[i] * kc - r, (D.size - set.zs[i]) * kc - r, d, d);
+          for (let i = 0; i < set.xs.length; i++) if (set.style(i, cz)) cx.fillRect(set.xs[i] * kc - r, (D.size - set.zs[i]) * kc - r, d, d);
           set.cacheKey = key;
         }
         ctx.globalAlpha = cst.a ?? 1;
@@ -242,6 +252,7 @@
         const r = st.r, d = r * 2, xs = set.xs, zs = set.zs, k = v.k, ox = v.ox, oy = v.oy, S = v.S, w = v.w, h = v.h;
         ctx.globalAlpha = st.a ?? 1; ctx.fillStyle = st.color;
         set.near(v.x0 - pad, v.x1 + pad, v.zBot - pad, v.zTop + pad, (i) => {
+          if (!set.style(i, v.z)) return;
           const px = ox + xs[i] * k, py = oy + (S - zs[i]) * k;
           if (px > -4 && py > -4 && px < w + 4 && py < h + 4) ctx.fillRect(px - r, py - r, d, d);
         });
@@ -288,7 +299,7 @@
       if (!(D.tiers[t] || []).length) continue;
       ctx.globalAlpha = st.fill; ctx.fillStyle = st.color; ctx.fill(p, "evenodd");
       ctx.save(); ctx.clip(p, "evenodd");
-      ctx.globalAlpha = 0.95; ctx.strokeStyle = st.color; ctx.lineWidth = 3 / v.k; ctx.lineJoin = "round";
+      ctx.globalAlpha = 0.95; ctx.strokeStyle = st.color; ctx.lineWidth = 3 / v.k; ctx.lineJoin = "round"; ctx.lineCap = "round";
       ctx.stroke(p);
       ctx.restore();
     }
@@ -358,7 +369,8 @@
   function buildAreas(lid) {
     if (areas[lid]) return areas[lid];
     if (lid === "infected") {
-      areas.infected = new AreaSet(D.zones.map(([x, z, r, t, lo, hi]) => ({ x, z, r, label: `${D.zoneTypes[t]} infected · ${lo}–${hi}` })));
+      areas.infected = new AreaSet(D.zones.map(([x, z, r, t, lo, hi]) => ({ x, z, r, zt: D.zoneTypes[t], label: `${D.zoneTypes[t]} infected · ${lo}–${hi}` })),
+        (it) => (isOff("infected", it.zt) ? null : "zone"));
     } else if (lid === "gas") {
       areas.gas = new AreaSet(D.gas.map(([x, z, r, n]) => ({ x, z, r, label: `Gas zone${n ? ` · ${n.replace(/[-_]/g, " ")}` : ""}` })));
     } else if (lid === "gasevent") {
@@ -366,7 +378,7 @@
     } else if (lid === "animals") {
       areas.animals = new AreaSet(W.animals.flatMap((a) => a.z.map(([x, z, r, t]) => ({
         x, z, r, species: a.n, label: zoneLabel(a.n, W.animalZones[t]), dash: /rest/i.test(W.animalZones[t]) ? [3, 4] : null }))),
-        (it) => (state.animalOff.has(it.species) ? null : it.dash ? "rest" : "zone"));
+        (it) => (isOff("animals", it.species) ? null : it.dash ? "rest" : "zone"));
     }
     return areas[lid];
   }
@@ -537,14 +549,14 @@
     for (const k of ["wells", "fruit", "berries"]) {
       const a = W[k], xs = [], zs = [], kind = [], step = k === "wells" ? 2 : 3;
       for (let i = 0; i < a.length; i += step) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
-      sets[k] = new PointSet(xs, zs, (i, z) => stylePlain(k, z), { kind, uniform: true });
+      sets[k] = new PointSet(xs, zs, (i, z) => (isOff(k, W.kinds[kind[i]]) ? null : stylePlain(k, z)), { kind, uniform: true });
     }
     // one symbol per animal zone, from mid zoom; rest zones are shown by their circle alone
     const xs = [], zs = [], sp = [];
     W.animals.forEach((a, ai) => a.z.forEach(([x, z, , t]) => { if (!/rest/i.test(W.animalZones[t])) { xs.push(x); zs.push(z); sp.push(ai); } }));
     sets.animalPts = new PointSet(xs, zs, (i, z) => {
       const a = W.animals[sp[i]];
-      if (state.animalOff.has(a.n) || z < POINTS.animalPts.badge) return null;
+      if (isOff("animals", a.n) || z < POINTS.animalPts.badge) return null;
       return { icon: a.i, r: badgeR(z) * 0.95, color: "#f2f2f2", ring: POINTS.animalPts.tone };
     }, { species: sp });
   }
@@ -596,14 +608,14 @@
       return z >= 4 ? { shape, r: r * 0.85, color: "#6a6a6a", a: 0.45, ghost: !state.layers.has("buildings") } : null;
     }
     const key = D.lootTypes[B.l[i]][0];
-    if (state.lootOff.has(key)) return null;
+    if (isOff("buildings", key)) return null;
     return { shape, r, color: LOOT_COLOR[key], a: z <= 2 ? 0.85 : 1, outline };
   }
 
   const badgeR = (z) => sizeAt(z, [7, 8, 9, 10, 11, 12, 13, 13]);
   function styleEvent(lid, e, z) {
     const st = POINTS[lid], ev = D.events[lid][e];
-    if (lid === "vehicles" && state.vehOff.has(ev.cls)) return null;
+    if (isOff(lid, ev.cls)) return null;
     const ic = lid === "vehicles" ? VEHICLE_ICON[ev.cls] || "car" : st.icon;
     if (z >= st.badge) return { icon: ic, r: badgeR(z), color: "#f2f2f2", ring: st.tone, o: 2 };
     return { shape: st.shape, r: sizeAt(z, [2.6, 3.4, 4, 4.6, 5, 5, 5, 5]), color: st.tone, outline: 1.5, o: 2 };
@@ -644,8 +656,20 @@
     l.innerHTML = `<input type="checkbox" data-layer="${lid}">${glyph}<span>${esc(label)}</span><b class="n">${fmt(n)}</b>`;
     return l;
   }
-  function chip(key, label, attr, swatch, n) {
-    return `<button type="button" class="chip" ${attr}="${esc(key)}" aria-pressed="true">${swatch || ""}<span>${esc(label)}</span>${n != null ? `<b>${fmt(n)}</b>` : ""}</button>`;
+  function chip(lid, key, label, swatch, n) {
+    return `<button type="button" class="chip" data-sub="${esc(lid)}" data-key="${esc(key)}" aria-pressed="${!isOff(lid, key)}">${swatch || ""}<span>${esc(label)}</span>${n != null ? `<b>${fmt(n)}</b>` : ""}</button>`;
+  }
+  // chips under a layer row, when the layer has more than one kind of thing
+  function subChips(lid, entries) {
+    const sub = document.createElement("div");
+    sub.className = "chips sub"; sub.dataset.for = lid;
+    sub.innerHTML = entries.length > 1 ? entries.map((e) => chip(lid, e.k, e.label, e.icon ? icon(e.icon, "ic") : "", e.n)).join("") : "";
+    return sub;
+  }
+  function worldEntries(k) {
+    const counts = {};
+    sets[k].kind.forEach((ki) => (counts[ki] = (counts[ki] || 0) + 1));
+    return Object.keys(counts).map((ki) => ({ k: W.kinds[ki], label: W.kinds[ki], n: counts[ki] }));
   }
 
   function buildPanel() {
@@ -662,7 +686,7 @@
     $('[data-count="buildings"]').textContent = fmt(D.buildings.x.length);
     const counts = {};
     D.buildings.l.forEach((l) => (counts[l] = (counts[l] || 0) + 1));
-    $("#loot-types").innerHTML = D.lootTypes.map(([k, label], i) => counts[i] ? chip(k, label, "data-loot", `<i class="sw" style="background:${LOOT_COLOR[k]}"></i>`) : "").join("");
+    $("#loot-types").innerHTML = D.lootTypes.map(([k, label], i) => counts[i] ? chip("buildings", k, label, `<i class="sw" style="background:${LOOT_COLOR[k]}"></i>`) : "").join("");
     $("#tier-key").innerHTML = `<span><i class="tk"></i>Tier 1</span>` + [2, 3, 4].filter((t) => (D.tiers[t] || []).length)
       .map((t) => `<span><i class="tk" style="--c:${TIER_STYLE[t].color}"></i>Tier ${t}</span>`).join("");
 
@@ -674,11 +698,8 @@
       const label = lid === "spawns" ? LABEL.spawns : D.eventLayers.find((l) => l[0] === lid)[1];
       const ic = (POINTS[lid] || AREAS[lid]).icon;
       sp.append(row(lid, label, icon(ic, "ic row-ic"), n));
-      if (lid === "vehicles") {
-        const sub = document.createElement("div");
-        sub.className = "chips sub"; sub.dataset.for = "vehicles";
-        sub.innerHTML = D.events.vehicles.map((ev) => chip(ev.cls, ev.type, "data-veh", icon(VEHICLE_ICON[ev.cls] || "car", "ic"), ev.p.length)).join("");
-        sp.append(sub);
+      if (D.events[lid]) {
+        sp.append(subChips(lid, D.events[lid].map((ev) => ({ k: ev.cls, label: eventLabel(lid, ev), icon: lid === "vehicles" ? VEHICLE_ICON[ev.cls] || "car" : null, n: ev.p.length }))));
       }
     }
     const wl = $("#world-layers");
@@ -688,27 +709,27 @@
     for (const lid of WORLD_ORDER) {
       if (!wc[lid]) continue;
       wl.append(row(lid, LABEL[lid], icon((POINTS[lid] || AREAS[lid]).icon, "ic row-ic"), wc[lid]));
-      if (lid === "animals") {
-        const sub = document.createElement("div");
-        sub.className = "chips sub"; sub.dataset.for = "animals";
-        sub.innerHTML = D.world.animals.map(([n, c, ic]) => chip(n, n, "data-animal", icon(ic, "ic"), c)).join("");
-        wl.append(sub);
-      }
+      if (lid === "animals") wl.append(subChips("animals", D.world.animals.map(([n, c, ic]) => ({ k: n, label: n, icon: ic, n: c }))));
+      else if (lid === "infected") {
+        const zc = {};
+        D.zones.forEach((z) => (zc[z[3]] = (zc[z[3]] || 0) + 1));
+        wl.append(subChips("infected", D.zoneTypes.map((t, i) => ({ k: t, label: t, n: zc[i] || 0 })).filter((e) => e.n)));
+      } else if (lid === "fruit" || lid === "berries") wl.append(subChips(lid, W ? worldEntries(lid) : []));   // filled once world.json is loaded
     }
 
     $$("#panel input[data-layer]").forEach((cb) => (cb.onchange = () => {
       cb.checked ? state.layers.add(cb.dataset.layer) : state.layers.delete(cb.dataset.layer);
       applyState();
     }));
-    const toggler = (attr, set) => $$(`[${attr}]`).forEach((b) => (b.onclick = () => {
-      const k = b.getAttribute(attr);
-      set.has(k) ? set.delete(k) : set.add(k);
+    wireChips();
+    $("#credit").textContent = cfg.credit || "";
+  }
+  function wireChips() {
+    $$("[data-sub]").forEach((b) => (b.onclick = () => {
+      const key = `${b.dataset.sub}:${b.dataset.key}`;
+      state.off.has(key) ? state.off.delete(key) : state.off.add(key);
       applyState();
     }));
-    toggler("data-loot", state.lootOff);
-    toggler("data-veh", state.vehOff);
-    toggler("data-animal", state.animalOff);
-    $("#credit").textContent = cfg.credit || "";
   }
 
   let applying = Promise.resolve();
@@ -722,17 +743,22 @@
     $$("#base [data-base]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.base === state.base));
     $("#grid-toggle").setAttribute("aria-pressed", !!state.grid);
 
-    if (["wells", "fruit", "berries", "animals"].some((k) => state.layers.has(k))) await loadWorld();
+    if (["wells", "fruit", "berries", "animals"].some((k) => state.layers.has(k))) {
+      await loadWorld();
+      for (const k of ["fruit", "berries"]) {
+        const sub = $(`.chips.sub[data-for="${k}"]`);
+        if (sub && !sub.dataset.filled) { sub.dataset.filled = "1"; sub.replaceWith(subChips(k, worldEntries(k))); wireChips(); }
+      }
+    }
     for (const lid of Object.keys(AREAS)) if (state.layers.has(lid)) buildAreas(lid);
-    if (areas.animals && areas.animals.sig !== [...state.animalOff].join()) { areas.animals.sig = [...state.animalOff].join(); areas.animals.invalidate(); }
+    const offSig = [...state.off].join();
+    for (const lid of ["animals", "infected"]) if (areas[lid] && areas[lid].sig !== offSig) { areas[lid].sig = offSig; areas[lid].invalidate(); }
 
     for (const cb of $$("#panel input[data-layer]")) cb.checked = state.layers.has(cb.dataset.layer);
-    $$(".chips.sub").forEach((s) => (s.hidden = !state.layers.has(s.dataset.for)));
+    $$(".chips.sub").forEach((s) => (s.hidden = !state.layers.has(s.dataset.for) || !s.children.length));
     $("#loot-types").hidden = !state.layers.has("buildings") || !!state.hits;
     $("#tier-key").hidden = !state.layers.has("tiers");
-    $$("[data-loot]").forEach((b) => b.setAttribute("aria-pressed", !state.lootOff.has(b.dataset.loot)));
-    $$("[data-veh]").forEach((b) => b.setAttribute("aria-pressed", !state.vehOff.has(b.dataset.veh)));
-    $$("[data-animal]").forEach((b) => b.setAttribute("aria-pressed", !state.animalOff.has(b.dataset.animal)));
+    $$("[data-sub]").forEach((b) => b.setAttribute("aria-pressed", !isOff(b.dataset.sub, b.dataset.key)));
 
     redraw();
     styleTierLabels();
@@ -755,7 +781,7 @@
   }
   function selectVehicle(cls) {
     state.layers.add("vehicles");
-    state.vehOff = new Set(D.events.vehicles.map((e) => e.cls).filter((c) => c !== cls));
+    for (const e of D.events.vehicles) state.off[e.cls === cls ? "delete" : "add"](`vehicles:${e.cls}`);
     applyState();
     const ev = D.events.vehicles.find((e) => e.cls === cls);
     if (ev) flyToBounds(L.latLngBounds(ev.p.map(([x, z]) => [z, x])).pad(0.08));
@@ -827,7 +853,7 @@
       const B = D.buildings;
       return `${D.groups[B.g[i]].n}${state.hits && state.hits[i] ? ` · ${state.hits[i]} pts` : ""}`;
     }
-    if (D.events[k]) { const ev = D.events[k][sets[k].ref[i]]; return ev.type || D.eventLayers.find((l) => l[0] === k)[1]; }
+    if (D.events[k]) { const ev = D.events[k][sets[k].ref[i]]; return D.events[k].length > 1 ? eventLabel(k, ev) : D.eventLayers.find((l) => l[0] === k)[1]; }
     if (k === "spawns") return "Player spawn";
     if (k === "wells") return "Water source";
     if (k === "animalPts") return W.animals[sets.animalPts.species[i]].n;
@@ -918,29 +944,31 @@
 
   // ------------------------------------------------------------------ right-click menu
   let ctxAt = null;
-  function onContext(e) {
-    if (tool === "measure") return finishMeasure();
-    ctxAt = e.latlng;
-    const { lng: x, lat: z } = e.latlng;
-    if (x < 0 || z < 0 || x > D.size || z > D.size) return;
-    const t = tierAt(x, z);
+  function showContext(e, head, items, onAct) {
     const el = $("#ctx");
-    el.innerHTML = `<p class="ctx-head">X ${fmt(x)} · Z ${fmt(z)}${t ? `<span>Tier ${t}</span>` : ""}</p>
-      <button type="button" role="menuitem" data-act="copy">${icon("copy")}Copy coordinates</button>
-      <button type="button" role="menuitem" data-act="marker">${icon("map-pin")}Add marker here</button>
-      <button type="button" role="menuitem" data-act="measure">${icon("ruler-2")}Measure from here</button>
-      <button type="button" role="menuitem" data-act="link">${icon("link")}Copy link to here</button>`;
+    el.innerHTML = `<p class="ctx-head">${head}</p>` + items.map(([act, ic, label]) => `<button type="button" role="menuitem" data-act="${act}">${icon(ic)}${esc(label)}</button>`).join("");
     el.hidden = false;
     const p = e.containerPoint, r = map.getContainer().getBoundingClientRect();
     const w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = `${clamp(r.left + p.x + 4, 8, innerWidth - w - 8)}px`;
     el.style.top = `${clamp(r.top + p.y + 4, 8, innerHeight - h - 8)}px`;
-    $$("[data-act]", el).forEach((b) => (b.onclick = () => contextAction(b.dataset.act)));
+    $$("[data-act]", el).forEach((b) => (b.onclick = () => { closeContext(); onAct(b.dataset.act); }));
     $("[data-act]", el).focus({ preventScroll: true });
+  }
+  function onContext(e) {
+    if (e.originalEvent && e.originalEvent._stopped) return;
+    if (tool === "measure") return finishMeasure();
+    ctxAt = e.latlng;
+    const { lng: x, lat: z } = e.latlng;
+    if (x < 0 || z < 0 || x > D.size || z > D.size) return;
+    const t = tierAt(x, z);
+    showContext(e, `X ${fmt(x)} · Z ${fmt(z)}${t ? `<span>Tier ${t}</span>` : ""}`, [
+      ["copy", "copy", "Copy coordinates"], ["marker", "map-pin", "Add marker here"],
+      ["measure", "ruler-2", "Measure from here"], ["link", "link", "Copy link to here"],
+    ], contextAction);
   }
   function contextAction(act) {
     const p = ctxAt;
-    closeContext();
     if (act === "copy") copy(coordText(p.lng, p.lat), "Coordinates copied");
     else if (act === "marker") addMarker(p.lng, p.lat, "", MARKER_COLORS[1], MARKER_ICONS[0], true);
     else if (act === "measure") { setTool("measure"); addMeasurePoint(p); }
@@ -949,6 +977,19 @@
       const params = hashParams(); params.set("x", Math.round(p.lng)); params.set("y", Math.round(p.lat)); params.set("z", z);
       copy(`${location.origin}${location.pathname}#${cfg.id}?${params}`, "Link copied");
     }
+  }
+  function markerContext(i, e) {
+    const m = loadMarkers()[i];
+    if (!m) return;
+    showContext(e, `${esc(m.l || "Marker")}<span>${coordText(m.x, m.z)}</span>`, [
+      m.k ? ["unlock", "lock-open", "Unlock marker"] : ["lock", "lock", "Lock marker"],
+      ["edit", "pencil", "Edit marker"], ["copy", "copy", "Copy coordinates"], ["delete", "trash", "Delete marker"],
+    ], (act) => {
+      if (act === "lock" || act === "unlock") { updateMarker(i, (x) => (x.k = act === "lock")); toast(act === "lock" ? "Marker locked" : "Marker unlocked"); }
+      else if (act === "edit") markerPopup(i, ll(m.x, m.z));
+      else if (act === "copy") copy(coordText(m.x, m.z), "Coordinates copied");
+      else if (act === "delete") { const l = loadMarkers(); l.splice(i, 1); saveMarkers(l); drawMarkers(); writeHash(); }
+    });
   }
   function closeContext() { $("#ctx").hidden = true; }
 
@@ -1039,26 +1080,54 @@
   const markerKey = () => `pz-markers-${cfg.id}`;
   const loadMarkers = () => { try { return JSON.parse(localStorage.getItem(markerKey()) || "[]"); } catch { return []; } };
   const saveMarkers = (list) => { try { localStorage.setItem(markerKey(), JSON.stringify(list)); } catch { /* private mode */ } };
-  const markerIcon = (m) => L.divIcon({ className: "mk", iconSize: [26, 26], iconAnchor: [13, 13],
-    html: `<span style="--c:${m.c}">${icon(m.i || MARKER_ICONS[0])}</span>` });
+  const markerIcon = (m, locked) => L.divIcon({ className: "mk" + (locked ? " locked" : ""), iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<span style="--c:${m.c}">${icon(locked ? "lock" : m.i || MARKER_ICONS[0])}</span>` });
+  const updateMarker = (i, fn) => { const l = loadMarkers(); if (!l[i]) return; fn(l[i]); saveMarkers(l); drawMarkers(); writeHash(); };
   function drawMarkers() {
     layers.markers.clearLayers();
     const list = loadMarkers();
     list.forEach((m, i) => {
-      const mk = L.marker(ll(m.x, m.z), { icon: markerIcon(m), draggable: true, keyboard: true, title: m.l || "Marker", riseOnHover: true })
+      const mk = L.marker(ll(m.x, m.z), { icon: markerIcon(m), draggable: !m.k, keyboard: true, title: m.l || "Marker", riseOnHover: true })
         .addTo(layers.markers)
         .on("click", (e) => { if (!tool) markerPopup(i, e.latlng); })
+        .on("contextmenu", (e) => { L.DomEvent.stop(e.originalEvent); hideHover(); markerContext(i, e); })
         .on("dragend", (e) => {
           const l = loadMarkers(), p = e.target.getLatLng();
           if (l[i]) { l[i].x = Math.round(p.lng); l[i].z = Math.round(p.lat); saveMarkers(l); writeHash(); }
         });
       if (m.l) mk.bindTooltip(esc(m.l), { permanent: true, direction: "right", className: "map-label", offset: [12, 0] });
+      if (m.k) watchLockedDrag(mk, m);
     });
     $("#clear-markers").hidden = !list.length;
   }
+  // A locked marker can't be dragged; trying shows a padlock and "Locked" for a moment
+  function watchLockedDrag(mk, m) {
+    const el = mk.getElement();
+    let start = null, timer = 0;
+    const show = () => {
+      start = null;
+      if (timer) return;
+      mk.setIcon(markerIcon(m, true));
+      const tip = mk.getTooltip();
+      if (tip) tip.setContent("Locked"); else mk.bindTooltip("Locked", { permanent: true, direction: "right", className: "map-label", offset: [12, 0] });
+      timer = setTimeout(() => {
+        timer = 0;
+        mk.setIcon(markerIcon(m));
+        if (m.l) mk.getTooltip().setContent(esc(m.l)); else mk.unbindTooltip();
+      }, 1200);
+    };
+    const move = (e) => { if (start && Math.hypot(e.clientX - start[0], e.clientY - start[1]) > 4) show(); };
+    const end = () => { start = null; document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", end); };
+    L.DomEvent.on(el, "pointerdown", (e) => {
+      if (e.button) return;
+      start = [e.clientX, e.clientY];
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", end);
+    });
+  }
   function addMarker(x, z, label, color, ic, edit) {
     const list = loadMarkers();
-    list.push({ x: Math.round(x), z: Math.round(z), l: label, c: color, i: ic });
+    list.push({ x: Math.round(x), z: Math.round(z), l: label, c: color, i: ic, k: false });
     saveMarkers(list); drawMarkers(); writeHash();
     if (edit) markerPopup(list.length - 1, ll(x, z));
   }
@@ -1067,17 +1136,18 @@
     const html = `<div class="pop mk-edit"><input type="text" maxlength="40" placeholder="Label" value="${esc(m.l || "")}" aria-label="Marker label">
       <div class="symbols">${MARKER_ICONS.map((n) => `<button type="button" data-i="${n}" aria-pressed="${n === (m.i || MARKER_ICONS[0])}" aria-label="${n.replace(/-/g, " ")}">${icon(n)}</button>`).join("")}</div>
       <div class="swatches">${MARKER_COLORS.map((c) => `<button type="button" style="background:${c}" data-c="${c}" aria-pressed="${c === m.c}" aria-label="Colour ${c}"></button>`).join("")}</div>
-      <div class="mk-foot">${coordsHtml(m.x, m.z)}<button type="button" class="del">${icon("trash")}Delete</button></div></div>`;
+      <div class="mk-foot">${coordsHtml(m.x, m.z)}<span><button type="button" class="del lock-btn">${icon(m.k ? "lock-open" : "lock")}${m.k ? "Unlock" : "Lock"}</button><button type="button" class="del">${icon("trash")}Delete</button></span></div></div>`;
     const p = popup(latlng, html, { offset: [0, -8] });
     const el = p.getElement();
     const input = $("input", el);
     setTimeout(() => input.focus(), 0);
-    const update = (fn) => { const l = loadMarkers(); if (!l[i]) return; fn(l[i]); saveMarkers(l); drawMarkers(); writeHash(); };
+    const update = (fn) => updateMarker(i, fn);
     input.onchange = () => update((x) => (x.l = input.value.trim()));
     input.onkeydown = (e) => { if (e.key === "Enter") { update((x) => (x.l = input.value.trim())); map.closePopup(); } };
     $$("[data-c]", el).forEach((b) => (b.onclick = () => { update((x) => (x.c = b.dataset.c)); $$("[data-c]", el).forEach((x) => x.setAttribute("aria-pressed", x === b)); }));
     $$("[data-i]", el).forEach((b) => (b.onclick = () => { update((x) => (x.i = b.dataset.i)); $$("[data-i]", el).forEach((x) => x.setAttribute("aria-pressed", x === b)); }));
-    $(".del", el).onclick = () => { const l = loadMarkers(); l.splice(i, 1); saveMarkers(l); drawMarkers(); map.closePopup(); writeHash(); };
+    $(".lock-btn", el).onclick = () => { update((x) => (x.k = !x.k)); map.closePopup(); toast(loadMarkers()[i].k ? "Marker locked" : "Marker unlocked"); };
+    $(".del:not(.lock-btn)", el).onclick = () => { const l = loadMarkers(); l.splice(i, 1); saveMarkers(l); drawMarkers(); map.closePopup(); writeHash(); };
   }
 
   // ------------------------------------------------------------------ readouts
@@ -1101,10 +1171,10 @@
     p.set("b", state.base);
     p.set("l", [...state.layers].join(","));
     if (state.grid) p.set("g", "1");
-    if (state.lootOff.size) p.set("lo", [...state.lootOff].join(","));
+    if (state.off.size) p.set("o", [...state.off].join(","));
     if (state.item) p.set("i", state.item);
     const mk = loadMarkers();
-    if (mk.length) p.set("m", mk.map((m) => [m.x, m.z, MARKER_COLORS.indexOf(m.c), encodeURIComponent(m.l || ""), Math.max(0, MARKER_ICONS.indexOf(m.i))].join("~")).join("|"));
+    if (mk.length) p.set("m", mk.map((m) => [m.x, m.z, MARKER_COLORS.indexOf(m.c), encodeURIComponent(m.l || ""), Math.max(0, MARKER_ICONS.indexOf(m.i)), m.k ? 1 : 0].join("~")).join("|"));
     return p;
   }
   function writeHash() {
@@ -1159,8 +1229,8 @@
     const shared = p.get("m");
     if (shared && !loadMarkers().length) {
       saveMarkers(shared.split("|").map((s) => {
-        const [x, z, c, l, i] = s.split("~");
-        return { x: +x, z: +z, c: MARKER_COLORS[+c] || MARKER_COLORS[1], l: decodeURIComponent(l || ""), i: MARKER_ICONS[+i] || MARKER_ICONS[0] };
+        const [x, z, c, l, i, k] = s.split("~");
+        return { x: +x, z: +z, c: MARKER_COLORS[+c] || MARKER_COLORS[1], l: decodeURIComponent(l || ""), i: MARKER_ICONS[+i] || MARKER_ICONS[0], k: k === "1" };
       }));
     }
     drawMarkers();
@@ -1180,7 +1250,7 @@
     p = p || new URLSearchParams();
     state = { base: p.get("b") || "satellite", grid: p.get("g") === "1",
               layers: new Set((p.get("l") ?? "buildings,vehicles").split(",").filter(Boolean)),
-              lootOff: new Set((p.get("lo") || "").split(",").filter(Boolean)), vehOff: new Set(), animalOff: new Set(),
+              off: new Set([...(p.get("o") || "").split(","), ...(p.get("lo") || "").split(",").map((k) => k && `buildings:${k}`)].filter(Boolean)),
               item: null, type: null, hits: null };
   }
 

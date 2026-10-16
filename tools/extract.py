@@ -182,7 +182,13 @@ def tier_shapes(af, min_cells=40):
             continue
         hier = hier[0]
         polys = []
-        to_m = lambda c: [[round((p[0][0] + 0.5) * cell), round((p[0][1] + 0.5) * cell)] for p in cv2.approxPolyDP(c, 1.2, True)]
+        def to_m(c):
+            pts = cv2.approxPolyDP(c, 2.0, True).reshape(-1, 2).astype(np.float32)
+            for _ in range(2):                                  # Chaikin corner cutting: rounds the pixel staircase
+                nxt = np.roll(pts, -1, axis=0)
+                pts = np.concatenate([pts * 0.75 + nxt * 0.25, pts * 0.25 + nxt * 0.75], axis=1).reshape(-1, 2)
+            pts = cv2.approxPolyDP(pts.reshape(-1, 1, 2), 0.5, True).reshape(-1, 2)
+            return [[round(float(x + 0.5) * cell, 1), round(float(y + 0.5) * cell, 1)] for x, y in pts]
         for i, c in enumerate(contours):
             if hier[i][3] != -1 or cv2.contourArea(c) < min_cells:
                 continue

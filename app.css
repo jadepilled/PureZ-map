@@ -87,6 +87,8 @@ body.tool-active #map { cursor: crosshair; }
 /* User markers */
 .mk span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #0e0e0e; border: 2px solid var(--c); color: var(--c); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
 .mk .ic { width: 15px; height: 15px; }
+.mk.locked span { background: var(--c); color: #0a0a0a; }
+.mk-foot > span { display: flex; gap: 0.8rem; }
 
 /* Panel */
 .panel {
