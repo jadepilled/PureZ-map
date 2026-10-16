@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PureZ Map</title>
+  <meta name="description" content="Interactive loot, spawn and vehicle map for PureZ servers.">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;500;600&family=Inter+Tight:wght@800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="https://purez.gg" aria-label="PureZ">Pure<span>Z</span><em>Map</em></a>
+    <div class="maps" role="tablist" id="map-tabs"></div>
+    <div class="search" role="search">
+      <input id="q" type="search" placeholder="Find an item or building" autocomplete="off" spellcheck="false" aria-label="Find an item or building">
+      <kbd class="hint">/</kbd>
+      <ul id="results" role="listbox" hidden></ul>
+    </div>
+    <a class="out" href="https://wiki.purez.gg">Wiki</a>
+    <button class="panel-toggle" type="button" aria-controls="panel" aria-expanded="false">Layers</button>
+  </header>
+
+  <div id="map" aria-label="Map"></div>
+
+  <aside id="panel" class="panel">
+    <section id="lookup" class="card" hidden></section>
+
+    <section>
+      <h2>Base</h2>
+      <div class="seg" id="base"></div>
+    </section>
+
+    <section>
+      <h2>Loot</h2>
+      <label class="row"><input type="checkbox" data-layer="tiers"><span>Loot tiers</span></label>
+      <div class="tier-legend" aria-label="Tier colours"><span data-t="1">1</span><span data-t="2">2</span><span data-t="3">3</span><span data-t="4">4</span></div>
+      <label class="row"><input type="checkbox" data-layer="buildings" checked><span>Loot buildings</span><b class="n" data-count="buildings"></b></label>
+      <label class="row select"><span>Area type</span><select id="usage"><option value="">None</option></select></label>
+    </section>
+
+    <section>
+      <h2>Spawns</h2>
+      <div id="spawn-layers"></div>
+    </section>
+
+    <section>
+      <h2>Tools</h2>
+      <div class="tools">
+        <button type="button" data-tool="measure" title="Measure (R)">Measure</button>
+        <button type="button" data-tool="marker" title="Add marker (M)">Marker</button>
+        <button type="button" id="share" title="Copy a link to this view">Share</button>
+      </div>
+      <button type="button" class="link" id="clear-markers" hidden>Clear markers</button>
+    </section>
+
+    <p class="credit" id="credit"></p>
+  </aside>
+
+  <div class="readout" id="readout" aria-live="off"></div>
+  <div class="scalebar" id="scalebar"><span></span><b></b></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
