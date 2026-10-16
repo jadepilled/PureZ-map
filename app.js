@@ -41,6 +41,7 @@
     supplies: { icon: "stack-2", shape: "circle", tone: "#bdbdbd", badge: 4 },
     spawns: { icon: "user", shape: "circle", tone: "#f2f2f2", badge: 3 },
     wells: { icon: "droplet", shape: "circle", tone: "#4ea1ff", badge: 3 },
+    animalPts: { shape: "circle", tone: "#d8b36a", badge: 4.5 },
     fruit: { icon: "apple", shape: "dot", tone: "#7cc464", badge: 7 },
     berries: { icon: "cherry", shape: "dot", tone: "#b48ae6", badge: 7 },
   };
@@ -52,12 +53,14 @@
   };
   const SPAWN_ORDER = ["vehicles", "helicrash", "convoy", "police", "watertruck", "containers", "crates", "trains", "supplies", "gasevent", "spawns"];
   const WORLD_ORDER = ["wells", "fruit", "berries", "animals", "infected", "gas"];
-  const LABEL = { spawns: "Player spawns", wells: "Wells", fruit: "Fruit trees", berries: "Berry bushes", animals: "Animals",
+  const LABEL = { spawns: "Player spawns", wells: "Water sources", fruit: "Fruit trees", berries: "Berry bushes", animals: "Animals",
                   infected: "Infected areas", gas: "Gas zones" };
+  const MOBILE = () => innerWidth <= 760;
   const MARKER_COLORS = ["#f2f2f2", "#ff4545", "#3987e5", "#c98500", "#199e70"];
   const MARKER_ICONS = ["map-pin", "home", "car", "key", "tent", "package", "flag", "star", "crosshair", "skull",
                         "droplet", "first-aid-kit", "campfire", "alert-triangle", "eye", "building-warehouse"];
 
+  let groupPts = [];
   let maps = [], cfg = null, D = null, W = null, map = null, layers = {}, sets = {}, areas = {}, state = {}, wiki = null, tierGrid = null;
   const cache = {};
 
@@ -82,7 +85,7 @@
     return t.length ? t.map((x) => TIER_LABEL[x]).join(", ") : "None";
   };
   const eventCount = (lid) => (D.events[lid] || []).reduce((s, e) => s + e.p.length, 0);
-  const panelPad = () => [innerWidth > 760 ? 310 : 10, 10];
+  const panelPad = () => [MOBILE() ? 10 : 310, 10];
 
   // ------------------------------------------------------------------ loot rules
   // An item can spawn at a building if one of its rules matches: usage against the building's usage (or the
@@ -147,6 +150,11 @@
   function addShape(p, px, py, st) {
     const r = st.r;
     switch (st.shape) {
+      case "rsquare": {
+        const c = r * 0.3;
+        if (p.roundRect) { p.roundRect(px - r, py - r, r * 2, r * 2, c); break; }
+        p.rect(px - r, py - r, r * 2, r * 2); break;
+      }
       case "square":
         if (st.rot) {
           const c = Math.cos(st.rot) * r, s = Math.sin(st.rot) * r;
@@ -204,14 +212,14 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (state.grid) drawGrid(ctx, v);
       if (state.layers.has("buildings") || state.hits) drawSet(ctx, v, sets.buildings);
-      for (const k2 of ["fruit", "berries", "wells"]) if (state.layers.has(k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
+      for (const k2 of ["fruit", "berries", "wells", "animalPts"]) if (state.layers.has(k2 === "animalPts" ? "animals" : k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
       for (const k2 of SPAWN_ORDER) if (state.layers.has(k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
     },
   });
 
   function drawSet(ctx, v, set) {
     const pad = 30 / v.k, batches = new Map(), badges = [];
-    if (set.uniform) {   // same style for every point: draw tiny dots as squares straight away
+    if (set.uniform && set.style(0, v.z)) {   // same style for every point: draw tiny dots as squares straight away
       const st = set.style(0, v.z);
       // dense layers at overview zoom: draw once per half zoom step into a whole-map image, then just place it
       if (!st.icon && v.z < 3.5 && set.xs.length > 5000) {
@@ -256,7 +264,7 @@
     for (const { st, p } of list) {
       ctx.globalAlpha = st.a ?? 1;
       ctx.fillStyle = st.color; ctx.fill(p);
-      if (st.outline) { ctx.lineWidth = st.outline; ctx.strokeStyle = "#0a0a0a"; ctx.stroke(p); }
+      if (st.outline) { ctx.lineWidth = st.outline; ctx.strokeStyle = "rgba(0,0,0,0.75)"; ctx.stroke(p); }
     }
     ctx.globalAlpha = 1;
     for (const [px, py, st] of badges) drawBadge(ctx, px, py, st);
@@ -432,7 +440,7 @@
   async function loadMap(id) {
     cfg = maps.find((m) => m.id === id) || maps[0];
     state.map = cfg.id;
-    $$("#map-tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.id === cfg.id));
+    $("#map-pick").value = cfg.id;
     D = cache[cfg.id] || (cache[cfg.id] = await (await fetch(`maps/${cfg.id}/data.json`)).json());
     W = cache[`w-${cfg.id}`] || null;
     sets = {}; areas = {};
@@ -469,6 +477,7 @@
 
     // point sets
     const B = D.buildings;
+    groupPts = D.groups.map((g) => g.c.reduce((s, c) => s + c[2], 0));
     sets.buildings = new PointSet(B.x, B.z, styleBuilding);
     for (const lid of Object.keys(D.events)) {
       if (lid === "gasevent") continue;
@@ -530,6 +539,14 @@
       for (let i = 0; i < a.length; i += step) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
       sets[k] = new PointSet(xs, zs, (i, z) => stylePlain(k, z), { kind, uniform: true });
     }
+    // one symbol per animal zone, from mid zoom; rest zones are shown by their circle alone
+    const xs = [], zs = [], sp = [];
+    W.animals.forEach((a, ai) => a.z.forEach(([x, z, , t]) => { if (!/rest/i.test(W.animalZones[t])) { xs.push(x); zs.push(z); sp.push(ai); } }));
+    sets.animalPts = new PointSet(xs, zs, (i, z) => {
+      const a = W.animals[sp[i]];
+      if (state.animalOff.has(a.n) || z < POINTS.animalPts.badge) return null;
+      return { icon: a.i, r: badgeR(z) * 0.95, color: "#f2f2f2", ring: POINTS.animalPts.tone };
+    }, { species: sp });
   }
   async function loadWorld() {
     if (!W) W = cache[`w-${cfg.id}`] = await (await fetch(`maps/${cfg.id}/world.json`)).json();
@@ -569,16 +586,18 @@
 
   function styleBuilding(i, z) {
     const B = D.buildings, hits = state.hits;
-    const r = sizeAt(z, [1.1, 1.5, 2.1, 2.9, 3.8, 5, 6.5, 8.5]);
-    const rot = z >= 4.5 ? (B.a[i] * Math.PI) / 180 : 0;
+    // bigger loot buildings draw a little larger from mid zoom on
+    const weight = z >= 3 ? 0.78 + 0.3 * Math.min(1, Math.sqrt(groupPts[B.g[i]]) / 5) : 1;
+    const r = sizeAt(z, [1.1, 1.5, 2.2, 3.1, 4, 5.2, 6.8, 8.8]) * weight;
+    const shape = z >= 3 ? "rsquare" : "square", outline = z >= 3 ? 1 : 0;
     if (hits) {
       const p = hits[i];
-      if (p > 0) return { shape: "square", r: r * 1.05 + Math.min(3, Math.sqrt(p) / 2) * clamp(z - 2, 0.5, 1), color: HIT, outline: z >= 3 ? 1 : 0, o: 1, rot };
-      return z >= 4 ? { shape: "square", r: r * 0.85, color: "#6a6a6a", a: 0.45, ghost: !state.layers.has("buildings"), rot } : null;
+      if (p > 0) return { shape, r: r * 1.05 + Math.min(3, Math.sqrt(p) / 2) * clamp(z - 2, 0.5, 1), color: HIT, outline, o: 1 };
+      return z >= 4 ? { shape, r: r * 0.85, color: "#6a6a6a", a: 0.45, ghost: !state.layers.has("buildings") } : null;
     }
     const key = D.lootTypes[B.l[i]][0];
     if (state.lootOff.has(key)) return null;
-    return { shape: "square", r, color: LOOT_COLOR[key], a: z <= 2 ? 0.85 : 1, rot };
+    return { shape, r, color: LOOT_COLOR[key], a: z <= 2 ? 0.85 : 1, outline };
   }
 
   const badgeR = (z) => sizeAt(z, [7, 8, 9, 10, 11, 12, 13, 13]);
@@ -672,7 +691,7 @@
       if (lid === "animals") {
         const sub = document.createElement("div");
         sub.className = "chips sub"; sub.dataset.for = "animals";
-        sub.innerHTML = D.world.animals.map(([n, c]) => chip(n, n, "data-animal", "", c)).join("");
+        sub.innerHTML = D.world.animals.map(([n, c, ic]) => chip(n, n, "data-animal", icon(ic, "ic"), c)).join("");
         wl.append(sub);
       }
     }
@@ -785,8 +804,8 @@
 
   // ------------------------------------------------------------------ hover, click, popups
   function hitTest(latlng) {
-    for (const k of [...SPAWN_ORDER, "wells", "fruit", "berries"]) {
-      if (!state.layers.has(k) || !sets[k]) continue;
+    for (const k of [...SPAWN_ORDER, "wells", "animalPts", "fruit", "berries"]) {
+      if (!state.layers.has(k === "animalPts" ? "animals" : k) || !sets[k]) continue;
       const i = sets[k].hit(latlng);
       if (i >= 0) return { k, i };
     }
@@ -810,7 +829,8 @@
     }
     if (D.events[k]) { const ev = D.events[k][sets[k].ref[i]]; return ev.type || D.eventLayers.find((l) => l[0] === k)[1]; }
     if (k === "spawns") return "Player spawn";
-    if (k === "wells") return "Well";
+    if (k === "wells") return "Water source";
+    if (k === "animalPts") return W.animals[sets.animalPts.species[i]].n;
     return W.kinds[sets[k].kind[i]] + (k === "fruit" ? " tree" : " bush");
   }
   function hitPos({ i, k, a }, cursor) { return a ? cursor : ll(sets[k].xs[i], sets[k].zs[i]); }
@@ -850,7 +870,17 @@
     else simplePopup(h, hitPos(h));
   }
 
-  const popup = (latlng, html, opts) => L.popup({ maxWidth: 330, autoPanPaddingTopLeft: [310, 70], ...opts }).setLatLng(latlng).setContent(html).openOn(map);
+  // On phones the point is brought to the lower middle of the screen first, so the popup sits above it in full view
+  function popup(latlng, html, opts = {}) {
+    if (MOBILE()) {
+      $("#panel").classList.remove("open"); $(".panel-toggle").setAttribute("aria-expanded", "false");
+      const size = map.getSize(), z = map.getZoom();
+      const target = map.unproject(map.project(latlng, z).subtract([0, size.y * 0.3]), z);   // point at 80% height
+      map.panTo(target, { animate: true, duration: 0.25 });
+      return L.popup({ maxWidth: Math.min(330, innerWidth - 32), autoPan: false, ...opts }).setLatLng(latlng).setContent(html).openOn(map);
+    }
+    return L.popup({ maxWidth: 330, autoPanPaddingTopLeft: [310, 70], ...opts }).setLatLng(latlng).setContent(html).openOn(map);
+  }
 
   function buildingPopup(i, latlng) {
     const B = D.buildings, g = D.groups[B.g[i]];
@@ -1089,17 +1119,15 @@
   // ------------------------------------------------------------------ boot
   async function boot() {
     maps = await (await fetch("maps.json")).json();
-    $("#map-tabs").replaceChildren(...maps.map((m) => {
-      const b = document.createElement("button");
-      b.type = "button"; b.role = "tab"; b.dataset.id = m.id; b.textContent = m.name;
-      b.onclick = () => {
-        if (m.id === cfg.id) return;
-        const keep = state.layers;
-        resetState(); state.layers = keep;
-        loadMap(m.id).then(() => { drawMarkers(); fitAll(); });
-      };
-      return b;
-    }));
+    const pick = $("#map-pick");
+    pick.replaceChildren(...maps.map((m) => new Option(m.name, m.id)));
+    pick.onchange = () => {
+      if (pick.value === cfg.id) return;
+      const keep = state.layers;
+      resetState(); state.layers = keep;
+      loadMap(pick.value).then(() => { drawMarkers(); fitAll(); });
+    };
+    $("#hint").textContent = matchMedia("(pointer: coarse)").matches ? "Press and hold the map for coordinates." : "Right-click the map for coordinates.";
     fetch("https://wiki.purez.gg/static/search.json").then((r) => r.json()).then((w) => (wiki = w)).catch(() => {});
     setupSearch();
     const toolIcons = { measure: ["ruler-2", "Measure"], marker: ["map-pin", "Marker"] };

@@ -30,6 +30,7 @@ a:hover { text-decoration-color: var(--red-hi); }
 kbd { font-family: var(--mono); font-size: 0.75rem; }
 :focus-visible { outline: 1px solid var(--white); outline-offset: 1px; }
 .ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* Top bar */
 .top {
@@ -40,10 +41,10 @@ kbd { font-family: var(--mono); font-size: 0.75rem; }
 .logo { font: 900 1.4rem/1 var(--head); color: var(--white); text-decoration: none; white-space: nowrap; }
 .logo span { color: var(--red); }
 .logo em { font: 600 0.72rem var(--body); font-style: normal; letter-spacing: 0.18em; text-transform: uppercase; color: var(--grey); margin-left: 0.55rem; vertical-align: 0.3em; }
-.maps { display: flex; border: 1px solid var(--line); }
-.maps button { background: none; border: 0; padding: 0.35rem 0.8rem; color: var(--grey); font-weight: 500; }
-.maps button:hover { color: var(--white); }
-.maps button[aria-selected="true"] { background: var(--raise); color: var(--white); box-shadow: inset 0 -2px 0 var(--red); }
+.pick { position: relative; display: inline-flex; }
+.pick select { appearance: none; height: 36px; padding: 0 2rem 0 0.8rem; background: var(--raise); border: 1px solid var(--line); color: var(--white); font-weight: 500; cursor: pointer; box-shadow: inset 0 -2px 0 var(--red); }
+.pick select:hover { border-color: var(--line-hi); }
+.pick::after { content: ""; position: absolute; right: 0.8rem; top: 50%; width: 6px; height: 6px; border: solid var(--grey); border-width: 0 1.5px 1.5px 0; transform: translateY(-70%) rotate(45deg); pointer-events: none; }
 .search { position: relative; flex: 1; max-width: 460px; }
 .search input { width: 100%; height: 36px; padding: 0 2rem 0 0.8rem; background: var(--raise); border: 1px solid var(--line); border-radius: 0; color: var(--white); }
 .search input:focus { outline: none; border-color: #4a4a4a; }
@@ -217,7 +218,6 @@ button.chip[aria-pressed="false"] .sw { background: none !important; box-shadow:
   .search { order: 5; flex: 1 1 100%; max-width: none; min-width: 0; }
   .logo em, .out, .search .hint { display: none; }
   .panel-toggle { display: block; margin-left: auto; }
-  .maps button { padding: 0.3rem 0.5rem; }
   .panel { z-index: 950; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 62vh; border-width: 1px 0 0; transform: translateY(105%); transition: transform 0.2s; }
   .panel.open { transform: none; }
   .readout { left: 10px; bottom: 10px; }

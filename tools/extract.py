@@ -52,6 +52,12 @@ LOOT_TYPES = [
 ]
 FRUIT = re.compile(r"^(Apple|Pear|Plum|Fig|Cherry|Peach)Tree")
 BERRIES = re.compile(r"^(Sambucus|Canina)Bush")
+# species label (singular) and map symbol, by territory name
+ANIMALS = {"Cow": ("Cow", "cow"), "WildBoar": ("Wild boar", "boar"), "Sheep": ("Sheep", "sheep"), "Goat": ("Goat", "goat"),
+           "Mouflon": ("Mouflon", "mouflon"), "Dog": ("Dog", "dog"), "Hen": ("Chicken", "chicken"), "Hare": ("Hare", "hare"),
+           "Fox": ("Fox", "fox"), "Wolf": ("Wolf", "wolf"), "Bear": ("Bear", "bear"), "Deer": ("Red deer", "reddeer"),
+           "RedDeer": ("Red deer", "reddeer"), "RoeDeer": ("Roe deer", "roedeer"), "Pig": ("Pig", "pig"),
+           "Monitor": ("Monitor lizard", "lizard"), "Lizard": ("Lizard", "lizard")}
 WELL = re.compile(r"(?i)well_?pump|^Land_.*_Well\b|Land_Well")
 ABBREV = {"Bttstck": "Buttstock", "Hndgrd": "Handguard"}
 
@@ -234,12 +240,10 @@ def territories(m):
                 zs.append([round(float(z.get("x"))), round(float(z.get("z"))), round(float(z.get("r"))), zone_types.index(zt)])
         if zs:
             label = re.sub(r"^Ambient", "", name)
-            label = {"Cow": "Cows", "WildBoar": "Wild boar", "Sheep": "Sheep", "Goat": "Goats", "Mouflon": "Mouflon",
-                     "Dog": "Dogs", "Hen": "Chickens", "Hare": "Hares", "Fox": "Foxes", "Wolf": "Wolves", "Bear": "Bears",
-                     "Deer": "Red deer", "RedDeer": "Red deer", "RoeDeer": "Roe deer", "Pig": "Pigs", "Monitor": "Monitor lizards",
-                     "Lizard": "Lizards"}.get(label, humanize(label))
+            key = re.sub(r"^Ambient", "", name)
+            label, ic = ANIMALS.get(key, (humanize(key), "paw"))
             prev = next((o for o in out if o["n"] == label), None)
-            (prev["z"].extend(zs) if prev else out.append({"n": label, "c": name, "z": zs}))
+            (prev["z"].extend(zs) if prev else out.append({"n": label, "i": ic, "c": name, "z": zs}))
     return out, zone_types
 
 
@@ -411,7 +415,7 @@ def main():
         "lootTypes": [[k, label] for k, label, _ in LOOT_TYPES],
         "tiers": shapes, "tierLabels": tier_labels,
         "world": {"wells": len(wells), "fruit": len(fruit), "berries": len(berries),
-                  "animals": [[a["n"], len(a["z"])] for a in animals]},
+                  "animals": [[a["n"], len(a["z"]), a["i"]] for a in animals]},
         "items": items, "events": layers, "eventLayers": [[l, label] for l, label, _ in EVENT_LAYERS if l in layers],
         "zoneTypes": ztypes, "zones": zones, "gas": gas, "spawns": fresh,
         "overlays": {"tiergrid": "tiergrid.png", "water": water},

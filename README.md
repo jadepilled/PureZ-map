@@ -12,7 +12,7 @@ Everything comes from the mission files each server runs:
 | Item lookup (where an item can spawn) | `types.xml` rules matched against each building's containers, usage and area tier |
 | Loot tier outlines | `areaflags.map` |
 | Vehicles, heli crashes, convoys, wrecks, crates, planks and bricks, random gas zones | `db/events.xml` (active events only) + `cfgeventspawns.xml` |
-| Wells | `mapgrouppos.xml` (well pumps) |
+| Water sources | `mapgrouppos.xml` (well pumps) |
 | Fruit trees, berry bushes | `mapgroupcluster*.xml` |
 | Animals | `cfgenvironment.xml` + `env/*_territories.xml` |
 | Infected areas | `env/zombie_territories.xml` |
@@ -38,6 +38,7 @@ Add `--cetool <CE tool folder>` for maps whose CE tool project includes a sea ma
 - **Satellite:** `python tools/satellite.py <world>/data/layers <map id>` stitches the terrain's `s_XXX_YYY_lco.paa` tiles and writes `maps/<id>/tiles/satellite`.
 - **Topographic:** `python tools/topo.py <heightmap.asc|.npy|.png> <map id>` renders contours and hillshade into `maps/<id>/tiles/topographic`.
 - Any square image: `python tools/tiles.py <image> maps/<id>/tiles/<layer>`.
+- Stopgap for a low-resolution preview image (the CE tool's 2048 px `map.png`): `python tools/enhance.py <image> <map id> --sea <water-sea.tga>` upscales, sharpens and cleans the coastline before cutting tiles.
 
 Then list the layer in that map's `base` array in `maps.json` (and its deepest zoom as `satelliteZoom` / `topoZoom`).
 
@@ -45,4 +46,4 @@ Then list the layer in that map's `base` array in `maps.json` (and its deepest z
 
 Run the extractor with a new `--id`, add an entry to `maps.json`, and it appears as a tab.
 
-Chernarus satellite image and economy data © Bohemia Interactive, used under ADPL-SA. Icons from [Tabler Icons](https://tabler.io/icons), MIT License.
+Chernarus satellite image and economy data © Bohemia Interactive, used under ADPL-SA. Icons from [Tabler Icons](https://tabler.io/icons), MIT License; animal glyphs drawn for PureZ.

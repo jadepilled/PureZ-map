@@ -19,7 +19,7 @@
 <body>
   <header class="top">
     <a class="logo" href="https://purez.gg" aria-label="PureZ">Pure<span>Z</span><em>Map</em></a>
-    <div class="maps" role="tablist" id="map-tabs"></div>
+    <label class="pick"><span class="sr">Map</span><select id="map-pick" aria-label="Map"></select></label>
     <div class="search" role="search">
       <input id="q" type="search" placeholder="Find an item, building or vehicle" autocomplete="off" spellcheck="false" aria-label="Find an item, building or vehicle">
       <kbd class="hint">/</kbd>
@@ -66,7 +66,7 @@
         <button type="button" data-tool="marker" title="Place a marker (M)"></button>
         <button type="button" id="share" title="Copy a link to this view"></button>
       </div>
-      <p class="hint-line">Right-click the map for coordinates. <button type="button" class="link" id="clear-markers" hidden>Clear markers</button></p>
+      <p class="hint-line"><span id="hint"></span> <button type="button" class="link" id="clear-markers" hidden>Clear markers</button></p>
     </details>
 
     <p class="credit" id="credit"></p>

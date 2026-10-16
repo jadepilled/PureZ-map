@@ -1,5 +1,22 @@
 [
-  {"id": "nasdara", "name": "Nasdara", "server": "PureZ Nasdara", "base": ["schematic"], "credit": "Map data from the PureZ Nasdara mission."},
-  {"id": "chernarus", "name": "Chernarus", "server": "PureZ Chernarus (coming soon)", "base": ["satellite", "schematic"], "satelliteZoom": 3,
-   "credit": "Satellite image and economy data © Bohemia Interactive, ADPL-SA."}
+  {
+    "id": "chernarus",
+    "name": "Chernarus",
+    "server": "PureZ Chernarus (coming soon)",
+    "base": [
+      "satellite",
+      "schematic"
+    ],
+    "satelliteZoom": 4,
+    "credit": "Satellite image and economy data \u00a9 Bohemia Interactive, ADPL-SA."
+  },
+  {
+    "id": "nasdara",
+    "name": "Nasdara",
+    "server": "PureZ Nasdara",
+    "base": [
+      "schematic"
+    ],
+    "credit": "Map data from the PureZ Nasdara mission."
+  }
 ]
