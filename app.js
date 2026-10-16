@@ -19,12 +19,11 @@
   const LOOT_COLOR = { police: "#3987e5", fire: "#d95926", farm: "#199e70", industrial: "#c98500", medic: "#d55181",
                        hunting: "#008300", coast: "#9085e9", military: "#e66767", town: "#d2d2d2", village: "#858585", other: "#555" };
 
-  // Tier areas: tier 1 is the background; 2-4 get their own outline pattern (drawn inside the area) and fill strength
+  // Tier areas: tier 1 is the background; 2-4 each get their own hue, a light tint and a thin outline
   const TIER_STYLE = {
-    1: { fill: 0.0, weight: 0 },
-    2: { fill: 0.08, weight: 1.25, color: "#d9d9d9", dash: [7, 5] },
-    3: { fill: 0.15, weight: 1.5, color: "#ffffff", dash: [14, 4, 2, 4] },
-    4: { fill: 0.3, weight: 2.25, color: "#ff6b6b", dash: [] },
+    2: { color: "#4ea1ff", fill: 0.16 },
+    3: { color: "#f2b134", fill: 0.2 },
+    4: { color: "#ff4d4d", fill: 0.26 },
   };
 
   // Point layers. Shape is used at overview zoom, the icon badge from `badge` zoom on.
@@ -46,10 +45,10 @@
     berries: { icon: "cherry", shape: "dot", tone: "#b48ae6", badge: 7 },
   };
   const AREAS = {
-    infected: { color: "#e66767", icon: "skull" },
-    gas: { color: "#8bd450", icon: "biohazard" },
-    gasevent: { color: "#8bd450", icon: "biohazard", dash: "6 5" },
-    animals: { color: "#d8b36a", icon: "paw" },
+    infected: { color: "#e66767", icon: "skull", width: 1, alpha: 0.55, fill: 0.05 },
+    gas: { color: "#8bd450", icon: "biohazard", width: 1.5, alpha: 0.9, fill: 0.18 },
+    gasevent: { color: "#8bd450", icon: "biohazard", width: 1.5, alpha: 0.85, fill: 0.08, dash: [6, 5] },
+    animals: { color: "#d8b36a", icon: "paw", width: 1, alpha: 0.75, fill: 0.06 },
   };
   const SPAWN_ORDER = ["vehicles", "helicrash", "convoy", "police", "watertruck", "containers", "crates", "trains", "supplies", "gasevent", "spawns"];
   const WORLD_ORDER = ["wells", "fruit", "berries", "animals", "infected", "gas"];
@@ -59,7 +58,7 @@
   const MARKER_ICONS = ["map-pin", "home", "car", "key", "tent", "package", "flag", "star", "crosshair", "skull",
                         "droplet", "first-aid-kit", "campfire", "alert-triangle", "eye", "building-warehouse"];
 
-  let maps = [], cfg = null, D = null, W = null, map = null, layers = {}, state = {}, wiki = null, tierGrid = null;
+  let maps = [], cfg = null, D = null, W = null, map = null, layers = {}, sets = {}, areas = {}, state = {}, wiki = null, tierGrid = null;
   const cache = {};
 
   // ------------------------------------------------------------------ helpers
@@ -83,6 +82,7 @@
     return t.length ? t.map((x) => TIER_LABEL[x]).join(", ") : "None";
   };
   const eventCount = (lid) => (D.events[lid] || []).reduce((s, e) => s + e.p.length, 0);
+  const panelPad = () => [innerWidth > 760 ? 310 : 10, 10];
 
   // ------------------------------------------------------------------ loot rules
   // An item can spawn at a building if one of its rules matches: usage against the building's usage (or the
@@ -105,153 +105,328 @@
   const itemsAt = (i) => D.items.map((it) => [it, itemPoints(it, i)]).filter(([, p]) => p > 0);
   const itemMask = (item, key) => item.r.reduce((m, r) => m | r[key], 0);
 
-  // ------------------------------------------------------------------ canvas point layer
-  // Points are drawn into map tiles rather than one Leaflet object each: tens of thousands stay smooth,
-  // and a grid index finds the point under the cursor.
-  const PointLayer = L.GridLayer.extend({
-    options: { updateWhenZooming: false, keepBuffer: 3, noWrap: true },
-    initialize(xs, zs, style, opts) {
-      L.setOptions(this, opts);
-      this.xs = xs; this.zs = zs; this.styleFn = style;
-      const S = D.size, n = 64;
-      this.cell = S / n; this.n = n;
+  // ------------------------------------------------------------------ point sets
+  // Every point layer is drawn on one canvas, at the exact current zoom, on every frame of a pan or zoom.
+  // A grid index keeps drawing and hit testing to what is near the view.
+  class PointSet {
+    constructor(xs, zs, style, extra) {
+      Object.assign(this, extra);
+      this.xs = xs; this.zs = zs; this.style = style;
+      const n = (this.n = 64);
+      this.cell = D.size / n;
       this.grid = new Map();
       for (let i = 0; i < xs.length; i++) {
         const k = clamp(Math.floor(xs[i] / this.cell), 0, n - 1) * n + clamp(Math.floor(zs[i] / this.cell), 0, n - 1);
         let a = this.grid.get(k); if (!a) this.grid.set(k, (a = [])); a.push(i);
       }
-    },
+    }
     near(x0, x1, z0, z1, fn) {
       const n = this.n, c = this.cell;
-      for (let cx = clamp(Math.floor(x0 / c), 0, n - 1); cx <= clamp(Math.floor(x1 / c), 0, n - 1); cx++) {
-        for (let cz = clamp(Math.floor(z0 / c), 0, n - 1); cz <= clamp(Math.floor(z1 / c), 0, n - 1); cz++) {
+      const cx1 = clamp(Math.floor(x1 / c), 0, n - 1), cz0 = clamp(Math.floor(z0 / c), 0, n - 1), cz1 = clamp(Math.floor(z1 / c), 0, n - 1);
+      for (let cx = clamp(Math.floor(x0 / c), 0, n - 1); cx <= cx1; cx++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
           const a = this.grid.get(cx * n + cz);
-          if (a) for (const i of a) fn(i);
+          if (a) for (let j = 0; j < a.length; j++) fn(a[j]);
         }
       }
-    },
-    createTile(c) {
-      const t = document.createElement("canvas");
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      t.width = t.height = 256 * dpr;
-      const ctx = t.getContext("2d");
-      ctx.scale(dpr, dpr);
-      const S = D.size, span = S / 2 ** c.z, k = 256 / span, x0 = c.x * span, zTop = S - c.y * span, pad = 26 / k;
-      const list = [];
-      this.near(x0 - pad, x0 + span + pad, zTop - span - pad, zTop + pad, (i) => {
-        const st = this.styleFn(i, c.z);
-        if (st) list.push([st, i]);
-      });
-      if (list.some(([st]) => st.o)) list.sort((a, b) => (a[0].o || 0) - (b[0].o || 0));
-      for (const [st, i] of list) drawPoint(ctx, (this.xs[i] - x0) * k, (zTop - this.zs[i]) * k, st);
-      return t;
-    },
-    // Leaflet's redraw() takes the unrounded zoom as tile zoom, which breaks with fractional zoom
-    redraw() {
-      if (this._map) { this._removeAllTiles(); this._update(); }
-      return this;
-    },
-    // index of the point under a map position, or -1
+    }
     hit(latlng) {
-      const z = Math.round(map.getZoom()), m = mpp(), x = latlng.lng, y = latlng.lat;
+      const z = map.getZoom(), m = mpp(), x = latlng.lng, y = latlng.lat;
       let best = -1, bd = Infinity;
-      this.near(x - 26 * m, x + 26 * m, y - 26 * m, y + 26 * m, (i) => {
-        const st = this.styleFn(i, z);
+      this.near(x - 30 * m, x + 30 * m, y - 30 * m, y + 30 * m, (i) => {
+        const st = this.style(i, z);
         if (!st || st.ghost) return;
         const d = Math.hypot(this.xs[i] - x, this.zs[i] - y) / m;
         const reach = (st.icon ? st.r : st.r * 1.3) + 4;
         if (d <= reach && d < bd) { bd = d; best = i; }
       });
       return best;
-    },
-  });
-
-  function drawPoint(ctx, px, py, st) {
-    const r = st.r;
-    ctx.globalAlpha = st.a ?? 1;
-    if (st.icon) {
-      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fillStyle = "#0e0e0e"; ctx.fill();
-      ctx.lineWidth = 1.5; ctx.strokeStyle = st.ring || st.color; ctx.stroke();
-      const s = (r * 1.5) / 24;
-      ctx.save(); ctx.translate(px - 12 * s, py - 12 * s); ctx.scale(s, s);
-      ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = st.color;
-      ctx.stroke(iconPath(st.icon)); ctx.restore();
-      ctx.globalAlpha = 1;
-      return;
     }
-    ctx.beginPath();
+  }
+
+  function addShape(p, px, py, st) {
+    const r = st.r;
     switch (st.shape) {
       case "square":
         if (st.rot) {
-          ctx.save(); ctx.translate(px, py); ctx.rotate(st.rot); ctx.rect(-r, -r, r * 2, r * 2); ctx.restore();
-        } else ctx.rect(px - r, py - r, r * 2, r * 2);
+          const c = Math.cos(st.rot) * r, s = Math.sin(st.rot) * r;
+          p.moveTo(px - c + s, py - s - c); p.lineTo(px + c + s, py + s - c); p.lineTo(px + c - s, py + s + c); p.lineTo(px - c - s, py - s + c); p.closePath();
+        } else p.rect(px - r, py - r, r * 2, r * 2);
         break;
-      case "diamond": ctx.moveTo(px, py - r * 1.35); ctx.lineTo(px + r * 1.35, py); ctx.lineTo(px, py + r * 1.35); ctx.lineTo(px - r * 1.35, py); ctx.closePath(); break;
-      case "triangle": ctx.moveTo(px, py - r * 1.3); ctx.lineTo(px + r * 1.2, py + r * 0.85); ctx.lineTo(px - r * 1.2, py + r * 0.85); ctx.closePath(); break;
-      default: ctx.arc(px, py, r, 0, Math.PI * 2);
+      case "diamond": p.moveTo(px, py - r * 1.35); p.lineTo(px + r * 1.35, py); p.lineTo(px, py + r * 1.35); p.lineTo(px - r * 1.35, py); p.closePath(); break;
+      case "triangle": p.moveTo(px, py - r * 1.3); p.lineTo(px + r * 1.2, py + r * 0.85); p.lineTo(px - r * 1.2, py + r * 0.85); p.closePath(); break;
+      default: p.moveTo(px + r, py); p.arc(px, py, r, 0, Math.PI * 2);
     }
-    ctx.fillStyle = st.color; ctx.fill();
-    if (st.outline) { ctx.lineWidth = st.outline; ctx.strokeStyle = "#0a0a0a"; ctx.stroke(); }
+  }
+  function drawBadge(ctx, px, py, st) {
+    const r = st.r;
+    ctx.globalAlpha = st.a ?? 1;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#0e0e0e"; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = st.ring || st.color; ctx.stroke();
+    const s = (r * 1.5) / 24;
+    ctx.save(); ctx.translate(px - 12 * s, py - 12 * s); ctx.scale(s, s);
+    ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = st.color;
+    ctx.stroke(iconPath(st.icon)); ctx.restore();
     ctx.globalAlpha = 1;
   }
 
-  // Tier polygons: fill, then the outline drawn only on the inside so neighbouring tiers read as two lines
-  const TierPolygon = L.Polygon.extend({
-    _updatePath() {
-      const r = this._renderer;
-      if (!r._drawing || !this._parts.length) return;
-      const ctx = r._ctx, o = this.options;
-      ctx.beginPath();
-      for (const ring of this._parts) {
-        ring.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-        ctx.closePath();
+  // ------------------------------------------------------------------ the scene: one canvas for everything drawn from data
+  const Scene = L.Layer.extend({
+    onAdd(m) {
+      this._c = L.DomUtil.create("canvas", "scene");
+      m.getPane("scene").appendChild(this._c);
+      this._ctx = this._c.getContext("2d");
+      m.on("move resize viewreset moveend zoomend", this.draw, this);
+      this.draw();
+    },
+    onRemove(m) { m.off("move resize viewreset moveend zoomend", this.draw, this); this._c.remove(); },
+    draw() {
+      const m = this._map;
+      if (!m || !D) return;
+      const size = m.getSize(), dpr = Math.min(2, window.devicePixelRatio || 1), c = this._c;
+      if (c.width !== Math.round(size.x * dpr) || c.height !== Math.round(size.y * dpr)) {
+        c.width = Math.round(size.x * dpr); c.height = Math.round(size.y * dpr);
+        c.style.width = `${size.x}px`; c.style.height = `${size.y}px`;
       }
-      if (o.fillOpacity) { ctx.globalAlpha = o.fillOpacity; ctx.fillStyle = "#d11a1a"; ctx.fill("evenodd"); }
-      if (o.weight) {
-        ctx.save(); ctx.clip("evenodd");
-        ctx.globalAlpha = 0.9; ctx.lineWidth = o.weight * 2; ctx.strokeStyle = o.color;
-        ctx.setLineDash(o.dash); ctx.lineCap = "butt"; ctx.stroke();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1;
+      L.DomUtil.setPosition(c, m.containerPointToLayerPoint([0, 0]));
+      const ctx = this._ctx, S = D.size, z = m.getZoom(), k = (256 * 2 ** z) / S;
+      const o = m.latLngToContainerPoint(L.latLng(S, 0));   // north-west corner of the map
+      const v = { z, k, ox: o.x, oy: o.y, S, w: size.x, h: size.y, dpr,
+                  x0: -o.x / k, x1: (size.x - o.x) / k, zTop: S + o.y / k, zBot: S - (size.y - o.y) / k };
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
+      // world coordinates (metres, z up) for areas
+      const world = () => ctx.setTransform(dpr * k, 0, 0, -dpr * k, dpr * o.x, dpr * (o.y + S * k));
+      if (state.layers.has("tiers")) { world(); drawTiers(ctx, v); }
+      world();
+      for (const lid of ["animals", "infected", "gasevent", "gas"]) if (state.layers.has(lid) && areas[lid]) drawAreas(ctx, v, lid);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (state.grid) drawGrid(ctx, v);
+      if (state.layers.has("buildings") || state.hits) drawSet(ctx, v, sets.buildings);
+      for (const k2 of ["fruit", "berries", "wells"]) if (state.layers.has(k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
+      for (const k2 of SPAWN_ORDER) if (state.layers.has(k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
     },
   });
 
-  // ------------------------------------------------------------------ smooth wheel zoom
-  // Leaflet zooms in fixed animated steps; this eases toward a target zoom and keeps the point under the cursor fixed.
-  const SmoothWheel = L.Handler.extend({
+  function drawSet(ctx, v, set) {
+    const pad = 30 / v.k, batches = new Map(), badges = [];
+    if (set.uniform) {   // same style for every point: draw tiny dots as squares straight away
+      const st = set.style(0, v.z);
+      // dense layers at overview zoom: draw once per half zoom step into a whole-map image, then just place it
+      if (!st.icon && v.z < 3.5 && set.xs.length > 5000) {
+        const cz = Math.round(v.z * 2) / 2, cst = set.style(0, cz), key = `${cz}|${cst.color}|${cst.a}`;
+        if (set.cacheKey !== key) {
+          const n = Math.round(256 * 2 ** cz), kc = n / D.size, r = cst.r, d = r * 2;
+          const c = set.cache || (set.cache = document.createElement("canvas"));
+          c.width = c.height = n;
+          const cx = c.getContext("2d");
+          cx.fillStyle = cst.color;
+          for (let i = 0; i < set.xs.length; i++) cx.fillRect(set.xs[i] * kc - r, (D.size - set.zs[i]) * kc - r, d, d);
+          set.cacheKey = key;
+        }
+        ctx.globalAlpha = cst.a ?? 1;
+        ctx.drawImage(set.cache, v.ox, v.oy, v.S * v.k, v.S * v.k);
+        ctx.globalAlpha = 1;
+        return;
+      }
+      if (!st.icon && st.r < 2.2) {
+        const r = st.r, d = r * 2, xs = set.xs, zs = set.zs, k = v.k, ox = v.ox, oy = v.oy, S = v.S, w = v.w, h = v.h;
+        ctx.globalAlpha = st.a ?? 1; ctx.fillStyle = st.color;
+        set.near(v.x0 - pad, v.x1 + pad, v.zBot - pad, v.zTop + pad, (i) => {
+          const px = ox + xs[i] * k, py = oy + (S - zs[i]) * k;
+          if (px > -4 && py > -4 && px < w + 4 && py < h + 4) ctx.fillRect(px - r, py - r, d, d);
+        });
+        ctx.globalAlpha = 1;
+        return;
+      }
+    }
+    set.near(v.x0 - pad, v.x1 + pad, v.zBot - pad, v.zTop + pad, (i) => {
+      const st = set.style(i, v.z);
+      if (!st) return;
+      const px = v.ox + set.xs[i] * v.k, py = v.oy + (v.S - set.zs[i]) * v.k;
+      if (px < -30 || py < -30 || px > v.w + 30 || py > v.h + 30) return;
+      if (st.icon) { badges.push([px, py, st]); return; }
+      const key = `${st.color}|${st.a ?? 1}|${st.outline || 0}|${st.o || 0}`;
+      let b = batches.get(key);
+      if (!b) batches.set(key, (b = { st, p: new Path2D() }));
+      addShape(b.p, px, py, st);
+    });
+    const list = [...batches.values()].sort((a, b) => (a.st.o || 0) - (b.st.o || 0));
+    for (const { st, p } of list) {
+      ctx.globalAlpha = st.a ?? 1;
+      ctx.fillStyle = st.color; ctx.fill(p);
+      if (st.outline) { ctx.lineWidth = st.outline; ctx.strokeStyle = "#0a0a0a"; ctx.stroke(p); }
+    }
+    ctx.globalAlpha = 1;
+    for (const [px, py, st] of badges) drawBadge(ctx, px, py, st);
+  }
+
+  // Tier areas: tint, plus an outline kept inside the area so neighbouring tiers read as two clean edges
+  function drawTiers(ctx, v) {
+    if (!layers.tierPaths) {
+      layers.tierPaths = {};
+      for (const t of [2, 3, 4]) {
+        const p = new Path2D();
+        for (const poly of D.tiers[t] || []) for (const ring of poly) {
+          ring.forEach(([x, z], j) => (j ? p.lineTo(x, z) : p.moveTo(x, z)));
+          p.closePath();
+        }
+        layers.tierPaths[t] = p;
+      }
+    }
+    for (const t of [2, 3, 4]) {
+      const st = TIER_STYLE[t], p = layers.tierPaths[t];
+      if (!(D.tiers[t] || []).length) continue;
+      ctx.globalAlpha = st.fill; ctx.fillStyle = st.color; ctx.fill(p, "evenodd");
+      ctx.save(); ctx.clip(p, "evenodd");
+      ctx.globalAlpha = 0.95; ctx.strokeStyle = st.color; ctx.lineWidth = 3 / v.k; ctx.lineJoin = "round";
+      ctx.stroke(p);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawAreas(ctx, v, lid) {
+    const st = AREAS[lid];
+    for (const g of areas[lid].paths()) {
+      ctx.globalAlpha = st.fill; ctx.fillStyle = st.color; ctx.fill(g.p);
+      ctx.globalAlpha = st.alpha; ctx.strokeStyle = st.color; ctx.lineWidth = st.width / v.k;
+      const dash = g.dash || st.dash;
+      ctx.setLineDash(dash ? dash.map((d) => d / v.k) : []);
+      ctx.stroke(g.p);
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawGrid(ctx, v) {
+    const step = 100 * v.k >= 36 ? 100 : 1000;
+    ctx.lineWidth = 1; ctx.font = "600 10px Barlow, sans-serif";
+    const label = 1000 * v.k >= 60;
+    for (let m = Math.max(0, Math.ceil(v.x0 / step) * step); m <= Math.min(v.S, v.x1); m += step) {
+      const px = Math.round(v.ox + m * v.k) + 0.5;
+      ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.07)";
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, v.h); ctx.stroke();
+      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), px + 3, 12); }
+    }
+    for (let m = Math.max(0, Math.ceil(v.zBot / step) * step); m <= Math.min(v.S, v.zTop); m += step) {
+      const py = Math.round(v.oy + (v.S - m) * v.k) + 0.5;
+      ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.07)";
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(v.w, py); ctx.stroke();
+      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), 4, py - 4); }
+    }
+  }
+
+  // Circle areas: [x, z, r, label, extra]; paths are built once in world units
+  class AreaSet {
+    constructor(items, groupOf) { this.items = items; this.groupOf = groupOf || (() => ""); this._paths = null; }
+    paths() {
+      if (!this._paths) {
+        const g = new Map();
+        this.items.forEach((it, i) => {
+          const key = this.groupOf(it, i);
+          if (key === null) return;
+          let e = g.get(key);
+          if (!e) g.set(key, (e = { p: new Path2D(), dash: it.dash }));
+          e.p.moveTo(it.x + it.r, it.z); e.p.arc(it.x, it.z, it.r, 0, Math.PI * 2);
+        });
+        this._paths = [...g.values()];
+      }
+      return this._paths;
+    }
+    invalidate() { this._paths = null; }
+    hit(x, z) {
+      let best = null;
+      for (const it of this.items) {
+        if (this.groupOf(it) === null) continue;
+        const d = Math.hypot(it.x - x, it.z - z);
+        if (d <= it.r && (!best || it.r < best.r)) best = it;
+      }
+      return best;
+    }
+  }
+
+  function buildAreas(lid) {
+    if (areas[lid]) return areas[lid];
+    if (lid === "infected") {
+      areas.infected = new AreaSet(D.zones.map(([x, z, r, t, lo, hi]) => ({ x, z, r, label: `${D.zoneTypes[t]} infected · ${lo}–${hi}` })));
+    } else if (lid === "gas") {
+      areas.gas = new AreaSet(D.gas.map(([x, z, r, n]) => ({ x, z, r, label: `Gas zone${n ? ` · ${n.replace(/[-_]/g, " ")}` : ""}` })));
+    } else if (lid === "gasevent") {
+      areas.gasevent = new AreaSet((D.events.gasevent || []).flatMap((ev) => ev.p.map(([x, z]) => ({ x, z, r: ev.r || 75, label: "Random gas zone", ev }))));
+    } else if (lid === "animals") {
+      areas.animals = new AreaSet(W.animals.flatMap((a) => a.z.map(([x, z, r, t]) => ({
+        x, z, r, species: a.n, label: zoneLabel(a.n, W.animalZones[t]), dash: /rest/i.test(W.animalZones[t]) ? [3, 4] : null }))),
+        (it) => (state.animalOff.has(it.species) ? null : it.dash ? "rest" : "zone"));
+    }
+    return areas[lid];
+  }
+
+  // ------------------------------------------------------------------ smooth zoom
+  // Leaflet zooms in fixed animated steps; this eases toward a target zoom (or a target view) frame by frame.
+  // The scene redraws on every frame, so nothing is ever shown scaled from an old zoom.
+  const SmoothZoom = L.Handler.extend({
     addHooks() { this._fn = (e) => this._wheel(e); this._map.getContainer().addEventListener("wheel", this._fn, { passive: false }); },
     removeHooks() { this._map.getContainer().removeEventListener("wheel", this._fn); },
+    _begin() {
+      const m = this._map;
+      if (!this._on) { this._on = true; m._stop(); m._moveStart(true, false); this._z = m.getZoom(); this._raf = requestAnimationFrame(() => this._step()); }
+    },
     _wheel(e) {
       e.preventDefault();
       const m = this._map;
       const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 600 : 1;
-      let dz = -e.deltaY * unit / (e.ctrlKey ? 90 : 240);   // ctrl = trackpad pinch
-      dz = clamp(dz, -1, 1);
-      if (!this._on) {
-        this._on = true; m._stop(); m._moveStart(true, false);
-        this._z = m.getZoom(); this._target = this._z;
-        this._raf = requestAnimationFrame(() => this._step());
-      }
-      this._px = m.mouseEventToContainerPoint(e);
-      this._anchor = m.containerPointToLatLng(this._px);
+      const dz = clamp(-e.deltaY * unit / (e.ctrlKey ? 90 : 220), -1, 1);   // ctrl = trackpad pinch
+      this.zoomAround(m.mouseEventToContainerPoint(e), dz);
+    },
+    zoomAround(px, dz) {
+      const m = this._map;
+      if (this._fly) this._fly = null;
+      const start = !this._on;
+      this._begin();
+      if (start || this._target == null) this._target = this._z;
+      this._px = px;
+      this._anchor = m.containerPointToLatLng(px);
       this._target = clamp(this._target + dz, m.getMinZoom(), m.getMaxZoom());
     },
+    flyTo(center, zoom) {
+      const m = this._map;
+      this._begin();
+      this._target = null;
+      this._fly = { c0: m.getCenter(), z0: this._z, c1: L.latLng(center), z1: clamp(zoom, m.getMinZoom(), m.getMaxZoom()), t0: performance.now(), dur: 420 };
+    },
     _step() {
-      const m = this._map, d = this._target - this._z;
-      this._z = Math.abs(d) < 0.003 ? this._target : this._z + d * 0.28;
-      const off = m.getSize().divideBy(2).subtract(this._px);
-      const center = m.unproject(m.project(this._anchor, this._z).add(off), this._z);
+      const m = this._map;
+      let center, done;
+      if (this._fly) {
+        const f = this._fly, t = clamp((performance.now() - f.t0) / f.dur, 0, 1), e = 1 - (1 - t) ** 3;
+        this._z = f.z0 + (f.z1 - f.z0) * e;
+        center = L.latLng(f.c0.lat + (f.c1.lat - f.c0.lat) * e, f.c0.lng + (f.c1.lng - f.c0.lng) * e);
+        done = t >= 1;
+        if (done) this._fly = null;
+      } else {
+        const d = this._target - this._z;
+        this._z = Math.abs(d) < 0.002 ? this._target : this._z + d * 0.3;
+        const off = m.getSize().divideBy(2).subtract(this._px);
+        center = m.unproject(m.project(this._anchor, this._z).add(off), this._z);
+        done = this._z === this._target;
+      }
       m._move(center, this._z, { pinch: true });
-      if (this._z === this._target) {
-        this._on = false; m._moveEnd(true);
+      if (done) {
+        this._on = false; this._target = null;
+        m._moveEnd(true);
         return;
       }
       this._raf = requestAnimationFrame(() => this._step());
     },
   });
-  L.Map.addInitHook("addHandler", "smoothWheel", SmoothWheel);
+  L.Map.addInitHook("addHandler", "smoothZoom", SmoothZoom);
+
+  function flyToBounds(bounds, maxZoom = 5) {
+    const t = map._getBoundsCenterZoom(L.latLngBounds(bounds), { paddingTopLeft: panelPad(), paddingBottomRight: [10, 10], maxZoom });
+    map.smoothZoom.flyTo(t.center, t.zoom);
+  }
 
   // ------------------------------------------------------------------ map setup
   async function loadMap(id) {
@@ -260,71 +435,49 @@
     $$("#map-tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.id === cfg.id));
     D = cache[cfg.id] || (cache[cfg.id] = await (await fetch(`maps/${cfg.id}/data.json`)).json());
     W = cache[`w-${cfg.id}`] || null;
+    sets = {}; areas = {};
     tierGrid = null;
     loadTierGrid();
     const S = D.size;
 
     if (map) { map.remove(); map = null; }
     const crs = L.extend({}, L.CRS.Simple, { transformation: new L.Transformation(256 / S, 0, -256 / S, 256) });
-    map = L.map("map", { crs, minZoom: 1, maxZoom: 8, zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false, smoothWheel: true,
-                         attributionControl: false, zoomControl: false, preferCanvas: true, inertiaDeceleration: 2600,
+    map = L.map("map", { crs, minZoom: 1, maxZoom: 8, zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false, smoothZoom: true,
+                         zoomAnimation: false, attributionControl: false, zoomControl: false, inertiaDeceleration: 2600,
                          maxBounds: [[-S * 0.25, -S * 0.25], [S * 1.25, S * 1.25]], doubleClickZoom: false, tapHold: true });
-    L.control.zoom({ position: "topright" }).addTo(map);
+    zoomButtons().addTo(map);
     const bounds = [[0, 0], [S, S]];
     fitAll();
     map.createPane("base").style.zIndex = 150;
-    map.createPane("tierPane").style.zIndex = 320;
-    map.createPane("areas").style.zIndex = 380;
-    map.createPane("points").style.zIndex = 420;
-    map.createPane("spawnPoints").style.zIndex = 430;
+    map.createPane("scene").style.zIndex = 400;
     const baseRenderer = L.canvas({ pane: "base" });
-    layers = {
-      renderer: L.canvas({ padding: 0.4, tolerance: 4 }),
-      areaRenderer: L.canvas({ pane: "areas", padding: 0.4, tolerance: 2 }),
-      tierRenderer: L.canvas({ pane: "tierPane", padding: 0.4 }),
-    };
+    layers = { renderer: L.canvas({ padding: 0.4, tolerance: 4 }) };
 
     layers.base = {
       satellite: cfg.base.includes("satellite") ? L.tileLayer(`maps/${cfg.id}/tiles/satellite/{z}/{x}/{y}.webp`,
-        { bounds, noWrap: true, maxNativeZoom: cfg.satelliteZoom || 3, maxZoom: 8, minZoom: 0, tileSize: 256, updateWhenZooming: false, keepBuffer: 3 }) : null,
+        { bounds, noWrap: true, maxNativeZoom: cfg.satelliteZoom || 3, maxZoom: 8, minZoom: 0, tileSize: 256, keepBuffer: 4 }) : null,
       topographic: cfg.base.includes("topographic") ? L.tileLayer(`maps/${cfg.id}/tiles/topographic/{z}/{x}/{y}.webp`,
-        { bounds, noWrap: true, maxNativeZoom: cfg.topoZoom || 5, maxZoom: 8, tileSize: 256, updateWhenZooming: false, keepBuffer: 3 }) : null,
+        { bounds, noWrap: true, maxNativeZoom: cfg.topoZoom || 5, maxZoom: 8, tileSize: 256, keepBuffer: 4 }) : null,
       schematic: L.layerGroup([
         L.rectangle(bounds, { renderer: baseRenderer, pane: "base", stroke: true, color: "#2a2a2a", weight: 1, fill: true, fillColor: "#121416", fillOpacity: 1, interactive: false }),
         ...(D.overlays.water ? [L.imageOverlay(`maps/${cfg.id}/${D.overlays.water}`, bounds, { pane: "base", className: "water", opacity: 0.5, interactive: false })] : []),
       ]),
     };
-    layers.grid = gridLayer(S);
 
-    // tiers
-    const tierLayers = [];
-    for (const t of [1, 2, 3, 4]) {
-      const st = TIER_STYLE[t];
-      for (const poly of (D.tiers[t] || [])) {
-        if (!st.fill && !st.weight) continue;
-        tierLayers.push(new TierPolygon(poly.map((ring) => ring.map(([x, z]) => [z, x])), {
-          renderer: layers.tierRenderer, pane: "tierPane", interactive: false, fillOpacity: st.fill, weight: st.weight, color: st.color, dash: st.dash,
-        }));
-      }
-    }
-    layers.tierLabels = D.tierLabels.map(([t, x, z, r]) => ({ r, tip: L.tooltip({ permanent: true, direction: "center", className: `tier-label t${t}`, interactive: false, pane: "tooltipPane" })
+    layers.tierLabels = D.tierLabels.map(([t, x, z, r]) => ({ r, tip: L.tooltip({ permanent: true, direction: "center", className: `tier-label t${t}`, interactive: false })
       .setLatLng(ll(x, z)).setContent(`Tier ${t}`) }));
-    layers.tiers = L.layerGroup(tierLayers);
 
-    // buildings
+    // point sets
     const B = D.buildings;
-    layers.buildings = new PointLayer(B.x, B.z, styleBuilding, { pane: "points", bounds });
-
-    // spawn and world points
+    sets.buildings = new PointSet(B.x, B.z, styleBuilding);
     for (const lid of Object.keys(D.events)) {
       if (lid === "gasevent") continue;
       const xs = [], zs = [], ref = [];
       D.events[lid].forEach((ev, e) => ev.p.forEach(([x, z]) => { xs.push(x); zs.push(z); ref.push(e); }));
-      const L_ = new PointLayer(xs, zs, (i, z) => styleEvent(lid, ref[i], z), { pane: "spawnPoints", bounds });
-      L_.ref = ref;
-      layers[lid] = L_;
+      sets[lid] = new PointSet(xs, zs, (i, z) => styleEvent(lid, ref[i], z), { ref });
     }
-    layers.spawns = new PointLayer(D.spawns.map((p) => p[0]), D.spawns.map((p) => p[1]), (i, z) => stylePlain("spawns", z), { pane: "spawnPoints", bounds });
+    sets.spawns = new PointSet(D.spawns.map((p) => p[0]), D.spawns.map((p) => p[1]), (i, z) => stylePlain("spawns", z), { uniform: true });
+    if (W) makeWorldSets();
 
     // place names: capitals and cities always, villages and locals as you zoom in
     layers.places = L.layerGroup((D.places || []).map(([n, rank, x, z]) =>
@@ -332,6 +485,7 @@
         .setLatLng(ll(x, z)).setContent(esc(n))));
     if (D.places && D.places.length) layers.places.addTo(map);
 
+    layers.scene = new Scene().addTo(map);
     layers.markers = L.layerGroup().addTo(map);
     layers.measure = L.layerGroup().addTo(map);
     layers.hover = L.tooltip({ direction: "top", offset: [0, -10], className: "hover-tip" });
@@ -340,27 +494,46 @@
     await applyState();
     map.on("mousemove", onMove);
     map.on("mouseout", () => { $("#readout").textContent = ""; hideHover(); });
+    map.on("zoom", () => { if (layers.measure.getLayers().length) layers.renderer._reset(); scalebar(); });
     map.on("zoomend", () => { stylePlaces(); styleTierLabels(); scalebar(); });
     map.on("moveend zoomend", writeHash);
     map.on("click", onMapClick);
     map.on("dblclick", () => tool === "measure" && finishMeasure());
     map.on("contextmenu", onContext);
-    map.on("movestart zoomstart", closeContext);
+    map.on("movestart zoomstart", () => { closeContext(); hideHover(); });
     map.on("popupopen", (e) => wirePopup(e.popup));
     scalebar(); styleTierLabels();
-    window.pz = { map, layers, D, state };  // for debugging in the console
+    window.pz = { map, layers, sets, areas, D, state };  // for debugging in the console
   }
 
+  function zoomButtons() {
+    const C = L.Control.extend({
+      options: { position: "topright" },
+      onAdd(m) {
+        const el = L.DomUtil.create("div", "leaflet-control-zoom leaflet-bar");
+        const btn = (label, title, dz) => {
+          const a = L.DomUtil.create("a", dz > 0 ? "leaflet-control-zoom-in" : "leaflet-control-zoom-out", el);
+          a.href = "#"; a.role = "button"; a.title = title; a.setAttribute("aria-label", title); a.innerHTML = label;
+          L.DomEvent.disableClickPropagation(a);
+          L.DomEvent.on(a, "click", (e) => { L.DomEvent.preventDefault(e); m.smoothZoom.zoomAround(m.getSize().divideBy(2), dz); });
+        };
+        btn("+", "Zoom in", 1); btn("&#x2212;", "Zoom out", -1);
+        return el;
+      },
+    });
+    return new C();
+  }
+
+  function makeWorldSets() {
+    for (const k of ["wells", "fruit", "berries"]) {
+      const a = W[k], xs = [], zs = [], kind = [], step = k === "wells" ? 2 : 3;
+      for (let i = 0; i < a.length; i += step) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
+      sets[k] = new PointSet(xs, zs, (i, z) => stylePlain(k, z), { kind, uniform: true });
+    }
+  }
   async function loadWorld() {
     if (!W) W = cache[`w-${cfg.id}`] = await (await fetch(`maps/${cfg.id}/world.json`)).json();
-    if (layers.wells) return W;
-    const bounds = [[0, 0], [D.size, D.size]];
-    for (const k of ["wells", "fruit", "berries"]) {
-      const a = W[k], xs = [], zs = [], kind = [];
-      for (let i = 0; i < a.length; i += k === "wells" ? 2 : 3) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
-      layers[k] = new PointLayer(xs, zs, (i, z) => stylePlain(k, z), { pane: "points", bounds });
-      layers[k].kind = kind;
-    }
+    if (!sets.wells) makeWorldSets();
     return W;
   }
 
@@ -383,68 +556,43 @@
 
   // Fit the whole map into the area the panel doesn't cover
   function fitAll() {
-    const wide = innerWidth > 760;
-    map.fitBounds([[0, 0], [D.size, D.size]], { paddingTopLeft: [wide ? 310 : 10, 10], paddingBottomRight: [10, 10] });
-  }
-
-  function gridLayer(S) {
-    const Grid = L.GridLayer.extend({
-      createTile(c) {
-        const t = document.createElement("canvas");
-        t.width = t.height = 256;
-        const ctx = t.getContext("2d");
-        const span = S / 2 ** c.z;
-        const step = span > 600 ? 1000 : 100;
-        const x0 = c.x * span, z1 = S - c.y * span;
-        ctx.lineWidth = 1;
-        ctx.font = "600 10px Barlow, sans-serif";
-        for (let m = Math.ceil(x0 / step) * step; m <= x0 + span; m += step) {
-          const px = Math.round((m - x0) / span * 256) + 0.5;
-          ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.07)";
-          ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, 256); ctx.stroke();
-          if (m % 1000 === 0 && span <= 4000) { ctx.fillStyle = "rgba(255,255,255,.45)"; ctx.fillText(String(m / 1000).padStart(2, "0"), px + 3, 11); }
-        }
-        for (let m = Math.floor(z1 / step) * step; m >= z1 - span; m -= step) {
-          const py = Math.round((z1 - m) / span * 256) + 0.5;
-          ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.07)";
-          ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(256, py); ctx.stroke();
-          if (m % 1000 === 0 && span <= 4000) { ctx.fillStyle = "rgba(255,255,255,.45)"; ctx.fillText(String(m / 1000).padStart(2, "0"), 3, py - 3); }
-        }
-        return t;
-      },
-    });
-    return new Grid({ bounds: [[0, 0], [S, S]], noWrap: true, pane: "overlayPane", maxZoom: 8, updateWhenZooming: false });
+    map.fitBounds([[0, 0], [D.size, D.size]], { paddingTopLeft: panelPad(), paddingBottomRight: [10, 10], animate: false });
   }
 
   // ------------------------------------------------------------------ styles
-  const sizeAt = (z, steps) => steps[clamp(z, 1, 8) - 1];
+  // Sizes grow continuously with zoom (steps are per whole zoom level, 1-8)
+  const sizeAt = (z, steps) => {
+    const i = clamp(z, 1, 8) - 1, lo = Math.floor(i), f = i - lo;
+    return steps[lo] + (steps[Math.min(lo + 1, steps.length - 1)] - steps[lo]) * f;
+  };
+  const redraw = () => layers.scene && layers.scene.draw();
 
   function styleBuilding(i, z) {
     const B = D.buildings, hits = state.hits;
     const r = sizeAt(z, [1.1, 1.5, 2.1, 2.9, 3.8, 5, 6.5, 8.5]);
-    const rot = z >= 5 ? (B.a[i] * Math.PI) / 180 : 0;
+    const rot = z >= 4.5 ? (B.a[i] * Math.PI) / 180 : 0;
     if (hits) {
       const p = hits[i];
-      if (p > 0) return { shape: "square", r: r * 1.05 + Math.min(3, Math.sqrt(p) / 2) * (z < 3 ? 0.5 : 1), color: HIT, outline: z >= 3 ? 1 : 0, o: 1, rot };
+      if (p > 0) return { shape: "square", r: r * 1.05 + Math.min(3, Math.sqrt(p) / 2) * clamp(z - 2, 0.5, 1), color: HIT, outline: z >= 3 ? 1 : 0, o: 1, rot };
       return z >= 4 ? { shape: "square", r: r * 0.85, color: "#6a6a6a", a: 0.45, ghost: !state.layers.has("buildings"), rot } : null;
     }
-    if (!state.layers.has("buildings")) return null;
     const key = D.lootTypes[B.l[i]][0];
     if (state.lootOff.has(key)) return null;
     return { shape: "square", r, color: LOOT_COLOR[key], a: z <= 2 ? 0.85 : 1, rot };
   }
 
+  const badgeR = (z) => sizeAt(z, [7, 8, 9, 10, 11, 12, 13, 13]);
   function styleEvent(lid, e, z) {
     const st = POINTS[lid], ev = D.events[lid][e];
     if (lid === "vehicles" && state.vehOff.has(ev.cls)) return null;
     const ic = lid === "vehicles" ? VEHICLE_ICON[ev.cls] || "car" : st.icon;
-    if (z >= st.badge) return { icon: ic, r: sizeAt(z, [7, 8, 9, 10, 11, 12, 13, 13]), color: "#f2f2f2", ring: st.tone, o: 2 };
+    if (z >= st.badge) return { icon: ic, r: badgeR(z), color: "#f2f2f2", ring: st.tone, o: 2 };
     return { shape: st.shape, r: sizeAt(z, [2.6, 3.4, 4, 4.6, 5, 5, 5, 5]), color: st.tone, outline: 1.5, o: 2 };
   }
 
   function stylePlain(k, z) {
     const st = POINTS[k];
-    if (z >= st.badge) return { icon: st.icon, r: sizeAt(z, [7, 8, 9, 10, 11, 12, 13, 13]), color: "#f2f2f2", ring: st.tone };
+    if (z >= st.badge) return { icon: st.icon, r: badgeR(z), color: "#f2f2f2", ring: st.tone };
     if (st.shape === "dot") return { shape: "circle", r: sizeAt(z, [0.7, 0.9, 1.3, 1.8, 2.6, 3.6, 4, 4]), color: st.tone, a: z <= 3 ? 0.55 : 0.95, outline: z >= 5 ? 1 : 0 };
     return { shape: st.shape, r: sizeAt(z, [2.6, 3.2, 4, 4.6, 5, 5, 5, 5]), color: st.tone, outline: 1.5 };
   }
@@ -463,35 +611,11 @@
     for (let r = 0; r <= 3; r++) el.classList.toggle(`hide-r${r}`, z < [0, 1.5, 3, 4.5][r]);
   }
 
-  // Area layers are built when first switched on
-  function areaLayer(lid) {
-    if (layers[lid]) return layers[lid];
-    const ar = AREAS[lid], R = layers.areaRenderer;
-    const circle = (x, z, r, extra) => L.circle(ll(x, z), { renderer: R, pane: "areas", radius: r, color: ar.color, weight: 1.25, opacity: 0.7, fillOpacity: 0.07, dashArray: ar.dash, ...extra });
-    if (lid === "infected") {
-      layers.infected = L.layerGroup(D.zones.map(([x, z, r, t, lo, hi]) =>
-        circle(x, z, r, { weight: 1, opacity: 0.55, fillOpacity: 0.05 }).bindTooltip(`${esc(D.zoneTypes[t])} infected · ${lo}–${hi}`, { sticky: true, className: "hover-tip" })));
-    } else if (lid === "gas") {
-      layers.gas = L.layerGroup(D.gas.map(([x, z, r, n]) =>
-        circle(x, z, r, { weight: 1.5, opacity: 0.9, fillOpacity: 0.18 }).bindTooltip(`Gas zone${n ? ` · ${esc(n.replace(/[-_]/g, " "))}` : ""}`, { sticky: true, className: "hover-tip" })));
-    } else if (lid === "gasevent") {
-      layers.gasevent = L.layerGroup((D.events.gasevent || []).flatMap((ev) => ev.p.map(([x, z]) =>
-        circle(x, z, ev.r || 75, { weight: 1.5, opacity: 0.85, fillOpacity: 0.08 }).bindTooltip("Random gas zone", { sticky: true, className: "hover-tip" })
-          .on("click", (e) => { L.DomEvent.stop(e); eventPopup("gasevent", ev, e.latlng); }))));
-    } else if (lid === "animals") {
-      layers.animals = L.layerGroup();
-      layers.animalCircles = W.animals.map((a) => L.layerGroup(a.z.map(([x, z, r, t]) =>
-        circle(x, z, r, { weight: 1, opacity: 0.75, fillOpacity: 0.06, dashArray: /rest/i.test(W.animalZones[t]) ? "3 4" : null })
-          .bindTooltip(zoneLabel(a.n, W.animalZones[t]), { sticky: true, className: "hover-tip" }))));
-    }
-    return layers[lid];
-  }
-
   // "HuntingGround" -> "Wolves · hunting ground"; generic names like "zone_hen" add nothing
   function zoneLabel(species, zone) {
     const z = zone.replace(/^zone_?/i, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase().trim();
     const generic = !z || /^zone_/i.test(zone);
-    return esc(generic ? species : `${species} · ${z}`);
+    return generic ? species : `${species} · ${z}`;
   }
 
   // ------------------------------------------------------------------ panel
@@ -520,11 +644,8 @@
     const counts = {};
     D.buildings.l.forEach((l) => (counts[l] = (counts[l] || 0) + 1));
     $("#loot-types").innerHTML = D.lootTypes.map(([k, label], i) => counts[i] ? chip(k, label, "data-loot", `<i class="sw" style="background:${LOOT_COLOR[k]}"></i>`) : "").join("");
-    $("#tier-key").innerHTML = [1, 2, 3, 4].filter((t) => t === 1 || (D.tiers[t] || []).length).map((t) => {
-      const st = TIER_STYLE[t];
-      const line = st.weight ? `<line x1="1" y1="5" x2="31" y2="5" stroke="${st.color}" stroke-width="${st.weight + 0.5}" stroke-dasharray="${st.dash.join(" ")}"/>` : "";
-      return `<span><svg viewBox="0 0 32 10" aria-hidden="true"><rect x="0" y="0" width="32" height="10" fill="#d11a1a" fill-opacity="${st.fill + 0.04}"/>${line}</svg>Tier ${t}</span>`;
-    }).join("");
+    $("#tier-key").innerHTML = `<span><i class="tk"></i>Tier 1</span>` + [2, 3, 4].filter((t) => (D.tiers[t] || []).length)
+      .map((t) => `<span><i class="tk" style="--c:${TIER_STYLE[t].color}"></i>Tier ${t}</span>`).join("");
 
     const sp = $("#spawn-layers");
     sp.replaceChildren();
@@ -581,41 +702,20 @@
     }
     $$("#base [data-base]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.base === state.base));
     $("#grid-toggle").setAttribute("aria-pressed", !!state.grid);
-    state.grid ? layers.grid.addTo(map) : map.removeLayer(layers.grid);
 
-    const worldOn = ["wells", "fruit", "berries", "animals"].some((k) => state.layers.has(k));
-    if (worldOn) await loadWorld();
+    if (["wells", "fruit", "berries", "animals"].some((k) => state.layers.has(k))) await loadWorld();
+    for (const lid of Object.keys(AREAS)) if (state.layers.has(lid)) buildAreas(lid);
+    if (areas.animals && areas.animals.sig !== [...state.animalOff].join()) { areas.animals.sig = [...state.animalOff].join(); areas.animals.invalidate(); }
 
-    for (const cb of $$("#panel input[data-layer]")) {
-      const lid = cb.dataset.layer, on = state.layers.has(lid);
-      cb.checked = on;
-      if (lid === "buildings") continue;
-      const l = AREAS[lid] && on ? areaLayer(lid) : layers[lid];
-      if (!l) continue;
-      if (on && !map.hasLayer(l)) l.addTo(map); else if (!on && map.hasLayer(l)) map.removeLayer(l);
-    }
+    for (const cb of $$("#panel input[data-layer]")) cb.checked = state.layers.has(cb.dataset.layer);
     $$(".chips.sub").forEach((s) => (s.hidden = !state.layers.has(s.dataset.for)));
     $("#loot-types").hidden = !state.layers.has("buildings") || !!state.hits;
     $("#tier-key").hidden = !state.layers.has("tiers");
     $$("[data-loot]").forEach((b) => b.setAttribute("aria-pressed", !state.lootOff.has(b.dataset.loot)));
     $$("[data-veh]").forEach((b) => b.setAttribute("aria-pressed", !state.vehOff.has(b.dataset.veh)));
     $$("[data-animal]").forEach((b) => b.setAttribute("aria-pressed", !state.animalOff.has(b.dataset.animal)));
-    if (layers.animals) {
-      W.animals.forEach((a, i) => {
-        const c = layers.animalCircles[i], on = !state.animalOff.has(a.n);
-        if (on && !layers.animals.hasLayer(c)) layers.animals.addLayer(c); else if (!on && layers.animals.hasLayer(c)) layers.animals.removeLayer(c);
-      });
-    }
 
-    // buildings show when switched on, or when a lookup has hits
-    const bOn = state.layers.has("buildings") || !!state.hits;
-    if (bOn && !map.hasLayer(layers.buildings)) layers.buildings.addTo(map);
-    if (!bOn && map.hasLayer(layers.buildings)) map.removeLayer(layers.buildings);
-    const sig = JSON.stringify([state.layers.has("buildings"), [...state.lootOff], state.item, state.type]);
-    if (sig !== layers.bSig) { layers.bSig = sig; layers.buildings.redraw(); }
-    const vsig = [...state.vehOff].join();
-    if (layers.vehicles && vsig !== layers.vSig) { layers.vSig = vsig; layers.vehicles.redraw(); }
-
+    redraw();
     styleTierLabels();
     stylePlaces();
     renderLookup();
@@ -639,13 +739,13 @@
     state.vehOff = new Set(D.events.vehicles.map((e) => e.cls).filter((c) => c !== cls));
     applyState();
     const ev = D.events.vehicles.find((e) => e.cls === cls);
-    if (ev) map.fitBounds(L.latLngBounds(ev.p.map(([x, z]) => [z, x])).pad(0.08), { maxZoom: 5, paddingTopLeft: [innerWidth > 760 ? 310 : 10, 10] });
+    if (ev) flyToBounds(L.latLngBounds(ev.p.map(([x, z]) => [z, x])).pad(0.08));
   }
   function clearLookup() { state.item = null; state.type = null; state.hits = null; applyState(); }
   function fitHits() {
     const pts = [];
     state.hits.forEach((p, i) => p && pts.push([D.buildings.z[i], D.buildings.x[i]]));
-    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.08), { maxZoom: 5, paddingTopLeft: [innerWidth > 760 ? 310 : 10, 10] });
+    if (pts.length) flyToBounds(L.latLngBounds(pts).pad(0.08));
   }
 
   function renderLookup() {
@@ -684,29 +784,36 @@
   }
 
   // ------------------------------------------------------------------ hover, click, popups
-  const POINT_HIT_ORDER = () => [...SPAWN_ORDER, "wells", "fruit", "berries"].filter((k) => layers[k] instanceof PointLayer && map.hasLayer(layers[k]));
   function hitTest(latlng) {
-    for (const k of POINT_HIT_ORDER()) {
-      const i = layers[k].hit(latlng);
+    for (const k of [...SPAWN_ORDER, "wells", "fruit", "berries"]) {
+      if (!state.layers.has(k) || !sets[k]) continue;
+      const i = sets[k].hit(latlng);
       if (i >= 0) return { k, i };
     }
-    if (map.hasLayer(layers.buildings)) {
-      const i = layers.buildings.hit(latlng);
+    if (state.layers.has("buildings") || state.hits) {
+      const i = sets.buildings.hit(latlng);
       if (i >= 0) return { k: "buildings", i };
     }
-    return null;
+    let best = null;
+    for (const lid of ["gas", "gasevent", "animals", "infected"]) {
+      if (!state.layers.has(lid) || !areas[lid]) continue;
+      const a = areas[lid].hit(latlng.lng, latlng.lat);
+      if (a && (!best || a.r < best.a.r)) best = { k: lid, a };
+    }
+    return best;
   }
-  function hitLabel({ k, i }) {
+  function hitLabel({ k, i, a }) {
+    if (a) return a.label;
     if (k === "buildings") {
       const B = D.buildings;
       return `${D.groups[B.g[i]].n}${state.hits && state.hits[i] ? ` · ${state.hits[i]} pts` : ""}`;
     }
-    if (D.events[k]) { const ev = D.events[k][layers[k].ref[i]]; return ev.type || D.eventLayers.find((l) => l[0] === k)[1]; }
+    if (D.events[k]) { const ev = D.events[k][sets[k].ref[i]]; return ev.type || D.eventLayers.find((l) => l[0] === k)[1]; }
     if (k === "spawns") return "Player spawn";
     if (k === "wells") return "Well";
-    return W.kinds[layers[k].kind[i]] + (k === "fruit" ? " tree" : " bush");
+    return W.kinds[sets[k].kind[i]] + (k === "fruit" ? " tree" : " bush");
   }
-  function hitPos({ k, i }) { const l = layers[k]; return ll(l.xs[i], l.zs[i]); }
+  function hitPos({ i, k, a }, cursor) { return a ? cursor : ll(sets[k].xs[i], sets[k].zs[i]); }
 
   let moveRaf = 0, lastMove = null;
   function onMove(e) {
@@ -715,12 +822,13 @@
     moveRaf = requestAnimationFrame(() => {
       moveRaf = 0;
       readout(lastMove);
-      if (tool || map._animatingZoom) return hideHover();
+      if (tool || map.smoothZoom._on) return hideHover();
       const h = hitTest(lastMove);
       if (!h) return hideHover();
-      layers.hover.setLatLng(hitPos(h)).setContent(esc(hitLabel(h)));
+      layers.hover.options.offset = h.a ? [0, -14] : [0, -10];
+      layers.hover.setLatLng(hitPos(h, lastMove)).setContent(esc(hitLabel(h)));
       if (!map.hasLayer(layers.hover)) layers.hover.addTo(map);
-      map.getContainer().classList.add("over-point");
+      map.getContainer().classList.toggle("over-point", !h.a || h.k === "gasevent");
     });
   }
   function hideHover() {
@@ -736,7 +844,9 @@
     if (!h) return;
     hideHover();
     if (h.k === "buildings") buildingPopup(h.i, hitPos(h));
-    else if (D.events[h.k]) eventPopup(h.k, D.events[h.k][layers[h.k].ref[h.i]], hitPos(h));
+    else if (h.k === "gasevent") eventPopup("gasevent", h.a.ev, ll(h.a.x, h.a.z));
+    else if (h.a) return;
+    else if (D.events[h.k]) eventPopup(h.k, D.events[h.k][sets[h.k].ref[h.i]], hitPos(h));
     else simplePopup(h, hitPos(h));
   }
 

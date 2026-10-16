@@ -60,6 +60,7 @@ kbd { font-family: var(--mono); font-size: 0.75rem; }
 /* Map */
 #map { position: fixed; inset: var(--top-h) 0 0 0; background: #0d0f10; }
 #map.over-point { cursor: pointer; }
+.leaflet-pane > canvas.scene { pointer-events: none; }
 body.tool-active #map { cursor: crosshair; }
 .leaflet-container { background: #0d0f10; font: inherit; }
 .leaflet-control-zoom { border: 1px solid var(--line) !important; border-radius: 0 !important; margin: 12px 12px 0 0 !important; }
@@ -77,7 +78,9 @@ body.tool-active #map { cursor: crosshair; }
 .leaflet-tooltip.place.r3 { color: rgba(242, 242, 242, 0.7); font-weight: 500; font-size: 0.74rem; }
 #map.hide-r0 .place.r0, #map.hide-r1 .place.r1, #map.hide-r2 .place.r2, #map.hide-r3 .place.r3 { display: none; }
 .leaflet-tooltip.tier-label { background: rgba(10, 10, 10, 0.82); border: 1px solid #444; color: var(--white); font: 600 0.72rem var(--body); letter-spacing: 0.12em; text-transform: uppercase; padding: 0.05rem 0.4rem; pointer-events: none; }
-.leaflet-tooltip.tier-label.t4 { border-color: #ff6b6b; }
+.leaflet-tooltip.tier-label.t2 { border-color: #4ea1ff; }
+.leaflet-tooltip.tier-label.t3 { border-color: #f2b134; }
+.leaflet-tooltip.tier-label.t4 { border-color: #ff4d4d; }
 .map-label { background: none !important; border: 0 !important; padding: 0 !important; color: var(--white) !important; font: 600 0.78rem var(--body) !important; letter-spacing: 0.06em; text-shadow: 0 1px 2px #000, 0 0 6px #000; white-space: nowrap; pointer-events: none; }
 
 /* User markers */
@@ -131,7 +134,8 @@ button.chip[aria-pressed="false"] .sw { background: none !important; box-shadow:
 .tier-key { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 0.25rem 0 0.2rem; font-size: 0.78rem; color: var(--text); }
 .tier-key[hidden] { display: none; }
 .tier-key span { display: flex; align-items: center; gap: 0.4rem; }
-.tier-key svg { width: 32px; height: 10px; flex: none; border: 1px solid #2c2c2c; }
+.tier-key .tk { width: 18px; height: 11px; flex: none; border: 1px solid #444; }
+.tier-key .tk[style] { border: 1.5px solid var(--c); background: color-mix(in srgb, var(--c) 32%, transparent); }
 
 .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 0.25rem; }
 .tools button { display: flex; align-items: center; justify-content: center; gap: 0.35rem; background: var(--raise); border: 1px solid var(--line); padding: 0.42rem 0.2rem; font-weight: 500; }
