@@ -18,6 +18,11 @@ Image.MAX_IMAGE_PIXELS = None
 def read_heights(path, lo=None, hi=None):
     if path.endswith(".npy"):
         return np.load(path).astype(np.float32)
+    if path.lower().endswith(".tga"):                # CE tool elevation layer, 8-bit; --min/--max give the metres
+        sys.path.insert(0, HERE)
+        import tga
+        h = tga.read_tga(path).astype(np.float32)
+        return h / 255.0 * ((hi if hi is not None else 255.0) - (lo or 0.0)) + (lo or 0.0)
     if path.endswith(".asc"):
         with open(path) as f:
             head = {}
@@ -34,6 +39,17 @@ def read_heights(path, lo=None, hi=None):
         img = img[..., 0]
     top = 65535.0 if img.max() > 255 else 255.0
     return (lo or 0) + img / top * ((hi or top) - (lo or 0))
+
+
+def render_with_mask(h, px, metres, sea, water_mask=None):
+    img = render(h, px, metres, sea)
+    if water_mask is not None:
+        m = Image.fromarray((water_mask > 0).astype(np.uint8) * 255).resize((px, px), Image.BILINEAR)
+        a = np.asarray(img).astype(np.float32)
+        w = (np.asarray(m) > 127)
+        a[w] = np.array([14, 24, 31], np.float32)
+        img = Image.fromarray(a.astype(np.uint8))
+    return img
 
 
 def render(h, px, metres, sea):
@@ -78,12 +94,18 @@ def main():
     ap.add_argument("--sea", type=float, default=0.0)
     ap.add_argument("--min", type=float)
     ap.add_argument("--max", type=float)
+    ap.add_argument("--water", help="TGA mask of lakes and rivers (CE tool water layer) for maps without a sea")
     a = ap.parse_args()
     import json
     root = os.path.dirname(HERE)
     with open(os.path.join(root, "maps", a.map_id, "data.json"), encoding="utf-8") as f:
         metres = json.load(f)["size"]
-    img = render(read_heights(a.heightmap, a.min, a.max), a.out_px, metres, a.sea)
+    water = None
+    if a.water:
+        sys.path.insert(0, HERE)
+        import tga
+        water = tga.read_tga(a.water)
+    img = render_with_mask(read_heights(a.heightmap, a.min, a.max), a.out_px, metres, a.sea, water)
     out = os.path.join(root, "maps", a.map_id, "topo.png")
     img.save(out)
     subprocess.run([sys.executable, os.path.join(HERE, "tiles.py"), out, os.path.join(root, "maps", a.map_id, "tiles", "topographic")], check=True)

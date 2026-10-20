@@ -151,7 +151,15 @@ def read_areaflags(path):
         raw = np.frombuffer(f.read(), dtype=np.uint8)
     n = w * h
     usage = raw[:n * 4].view("<u4").reshape(h, w)   # row 0 is the south edge
-    value = raw[n * 4:n * 5].reshape(h, w)
+    rest = raw[n * 4:]
+    if len(rest) >= n:
+        value = rest[:n].reshape(h, w)
+    else:                                            # Livonia packs two 4-bit values per byte
+        packed = rest[:n // 2]
+        value = np.empty(n, np.uint8)
+        value[0::2] = packed & 0x0F
+        value[1::2] = packed >> 4
+        value = value.reshape(h, w)
     return {"w": w, "h": h, "size": sx, "usage": usage, "value": value}
 
 

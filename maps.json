@@ -18,5 +18,29 @@
       "schematic"
     ],
     "credit": "Map data from the PureZ Nasdara mission."
+  },
+  {
+    "id": "enoch",
+    "name": "Livonia",
+    "server": "Vanilla Livonia (official economy files)",
+    "base": [
+      "satellite",
+      "topographic",
+      "schematic"
+    ],
+    "satelliteZoom": 6,
+    "topoZoom": 4,
+    "credit": "Satellite image, heightmap and economy data \u00a9 Bohemia Interactive, ADPL-SA. Vanilla economy, not a PureZ server."
+  },
+  {
+    "id": "sakhal",
+    "name": "Sakhal",
+    "server": "Vanilla Sakhal (official economy files)",
+    "base": [
+      "satellite",
+      "schematic"
+    ],
+    "satelliteZoom": 6,
+    "credit": "Satellite image and economy data \u00a9 Bohemia Interactive, ADPL-SA. Vanilla economy, not a PureZ server."
   }
 ]

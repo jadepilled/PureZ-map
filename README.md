@@ -47,3 +47,15 @@ Then list the layer in that map's `base` array in `maps.json` (and its deepest z
 Run the extractor with a new `--id`, add an entry to `maps.json`, and it appears as a tab.
 
 Chernarus satellite image and economy data © Bohemia Interactive, used under ADPL-SA. Icons from [Tabler Icons](https://tabler.io/icons), MIT License; animal glyphs drawn for PureZ.
+
+## Maps
+
+| Map | Source | Base layers |
+|---|---|---|
+| Chernarus | PureZ mission + game files | satellite, plain |
+| Nasdara | PureZ mission | plain (satellite and topo need the Nasdara world files: `data/layers/s_*_lco.paa` and the `.wrp`) |
+| Livonia | vanilla `dayzOffline.enoch` + CE tool elevation layer | satellite, topographic, plain |
+| Sakhal | vanilla `dayzOffline.sakhal` | satellite, plain |
+
+Topographic layers are rendered by `tools/topo.py` from a heightmap (CE tool `elevation.tga`, an ESRI grid or a 16-bit PNG).
+Chernarus and Sakhal ship no elevation layer in the CE tool, so their topo needs the heightmap from each world's `.wrp`.
