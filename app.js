@@ -1153,13 +1153,16 @@
       }, 1200);
     };
     const move = (e) => { if (start && Math.hypot(e.clientX - start[0], e.clientY - start[1]) > 4) show(); };
-    const end = () => { start = null; document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", end); };
+    const end = () => { start = null; map.dragging.enable(); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", end); };
     L.DomEvent.on(el, "pointerdown", (e) => {
       if (e.button) return;
+      L.DomEvent.stopPropagation(e);          // the map must not start panning from a locked marker
+      map.dragging.disable();
       start = [e.clientX, e.clientY];
       document.addEventListener("pointermove", move);
       document.addEventListener("pointerup", end);
     });
+    L.DomEvent.on(el, "mousedown touchstart", L.DomEvent.stopPropagation);
   }
   function addMarker(x, z, label, color, ic, edit) {
     const list = loadMarkers();
