@@ -486,7 +486,7 @@
   async function loadMap(id) {
     cfg = maps.find((m) => m.id === id) || maps[0];
     state.map = cfg.id;
-    $("#map-pick").value = cfg.id;
+    setPick(cfg.id);
     D = cache[cfg.id] || (cache[cfg.id] = await (await fetch(`maps/${cfg.id}/data.json`)).json());
     W = cache[`w-${cfg.id}`] || null;
     sets = {}; areas = {};
@@ -1287,17 +1287,44 @@
     return { id, p: new URLSearchParams(qs || "") };
   }
 
+  // ------------------------------------------------------------------ map picker (styled listbox, not the OS menu)
+  function setPick(id) {
+    const m = maps.find((x) => x.id === id);
+    $("#map-pick span").textContent = m ? m.name : id;
+    $$("#map-list li").forEach((li) => li.setAttribute("aria-selected", li.dataset.id === id));
+  }
+  function setupPick() {
+    const btn = $("#map-pick"), list = $("#map-list");
+    list.replaceChildren(...maps.map((m) => { const li = document.createElement("li"); li.setAttribute("role", "option"); li.dataset.id = m.id; li.tabIndex = -1; li.textContent = m.name; return li; }));
+    const open = (on) => { list.hidden = !on; btn.setAttribute("aria-expanded", on); if (on) (list.querySelector("[aria-selected=true]") || list.firstChild).focus(); };
+    const choose = (id) => {
+      open(false); btn.focus();
+      if (!id || id === cfg.id) return;
+      const keep = state.layers;
+      resetState(); state.layers = keep;
+      loadMap(id).then(() => { drawMarkers(); fitAll(); });
+    };
+    btn.onclick = () => open(list.hidden);
+    list.onclick = (e) => { const li = e.target.closest("li"); if (li) choose(li.dataset.id); };
+    const move = (d) => {
+      const items = $$("li", list), cur = items.indexOf(document.activeElement);
+      const from = cur < 0 ? items.findIndex((x) => x.getAttribute("aria-selected") === "true") : cur;
+      items[Math.max(0, Math.min(items.length - 1, from + d))].focus();
+    };
+    btn.onkeydown = (e) => { if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(true); } };
+    list.onkeydown = (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+      else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(document.activeElement.dataset.id); }
+      else if (e.key === "Escape") { open(false); btn.focus(); }
+    };
+    document.addEventListener("click", (e) => { if (!e.target.closest(".pick")) open(false); });
+  }
+
   // ------------------------------------------------------------------ boot
   async function boot() {
     maps = await (await fetch("maps.json")).json();
-    const pick = $("#map-pick");
-    pick.replaceChildren(...maps.map((m) => new Option(m.name, m.id)));
-    pick.onchange = () => {
-      if (pick.value === cfg.id) return;
-      const keep = state.layers;
-      resetState(); state.layers = keep;
-      loadMap(pick.value).then(() => { drawMarkers(); fitAll(); });
-    };
+    setupPick();
     $("#hint").textContent = matchMedia("(pointer: coarse)").matches ? "Press and hold the map for coordinates." : "Right-click the map for coordinates.";
     fetch(`${WIKI}/static/search.json`).then((r) => r.json()).then((w) => (wiki = w)).catch(() => {});
     setupSearch();
