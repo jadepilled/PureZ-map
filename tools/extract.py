@@ -9,7 +9,7 @@ Everything comes from the mission files the server runs: buildings and their loo
 points (mapgrouppos/mapgroupproto), loot rules (types.xml, cfglimitsdefinition),
 tier and usage areas (areaflags.map), events, infected areas, gas zones and spawns.
 """
-import argparse, json, os, re, struct, sys
+import argparse, json, math, os, re, struct, sys
 import xml.etree.ElementTree as ET
 
 import cv2
@@ -222,35 +222,104 @@ def tier_grid(af, out, px=1024):
     Image.fromarray(tier * 60, "L").resize((px, px), Image.NEAREST).save(out, optimize=True)
 
 
+CYR = {"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k",
+       "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "kh", "ц": "ts",
+       "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"}
+PLACE_FIX = {"Нижнее": "Nizhnoye", "Солнечный": "Solnichniy", "Электрозаводск": "Elektrozavodsk", "Черногорск": "Chernogorsk",
+             "Зеленогорск": "Zelenogorsk", "Северогорск": "Severograd", "Старое": "Staroye", "Новое": "Novoye", "Тисы": "Tisy"}
+
+
+def latin(name):
+    if name in PLACE_FIX:
+        return PLACE_FIX[name]
+    if not re.search("[\u0400-\u04FF]", name):
+        return name
+    out = []
+    for i, ch in enumerate(name):
+        low = ch.lower()
+        if low == "е" and (i == 0 or name[i - 1].lower() in "аеёиоуыэюяь"):
+            t = "ye"
+        elif low == "ы" and i and name[i - 1].lower() == "ы":
+            t = ""
+        else:
+            t = CYR.get(low, ch)
+        out.append(t.capitalize() if ch.isupper() else t)
+    s = "".join(out)
+    s = re.sub(r"yy\b", "y", s)         # Старый -> Stary
+    s = re.sub(r"iy\b", "y", s)         # Новый -> Novy
+    return s
+
+
+def hull(points):
+    """Convex hull (monotone chain) of [x, z] points."""
+    pts = sorted(set(map(tuple, points)))
+    if len(pts) < 3:
+        return [list(p) for p in pts]
+    cross = lambda o, a, b: (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return [list(p) for p in lower[:-1] + upper[:-1]]
+
+
 def territories(m):
-    """Animal territories from cfgenvironment.xml: [{n: species, z: [[x, z, r, zone type], ...]}]."""
+    """Animal territories from cfgenvironment.xml. A herd (deer, boar, wolves...) spawns in one of its
+    territory's zones and roams between them (graze, rest, water), so each zone becomes a circle of its
+    real radius, grouped per territory. Ambient life (hares, hens, foxes) is spawned around the player
+    near its zones, so those stay as points."""
     env = xml(os.path.join(m, "cfgenvironment.xml"))
     if env is None:
-        return [], []
+        return []
     files = {os.path.splitext(os.path.basename(f.get("path")))[0] for f in env.iter("file") if f.get("path")}
-    zone_types, out = [], []
+    out = []
     for t in env.iter("territory"):
         name = t.get("name")
         if not name or "zombie" in name.lower() or "infected" in name.lower():
             continue
-        zs = []
+        herd = (t.get("type") or "").lower() == "herd"
+        areas, pts = [], []
         for f in t.findall("file"):
             u = f.get("usable")
             root = xml(os.path.join(m, "env", f"{u}.xml")) if u in files else None
             if root is None:
                 continue
-            for z in root.iter("zone"):
-                zt = z.get("name") or "Zone"
-                if zt not in zone_types:
-                    zone_types.append(zt)
-                zs.append([round(float(z.get("x"))), round(float(z.get("z"))), round(float(z.get("r"))), zone_types.index(zt)])
-        if zs:
-            label = re.sub(r"^Ambient", "", name)
+            for terr in root.iter("territory"):
+                zones = [(float(z.get("x")), float(z.get("z")), float(z.get("r")), (z.get("name") or "").lower()) for z in terr.iter("zone")]
+                if not zones:
+                    continue
+                if herd:
+                    areas.append([[round(x), round(z), round(r), ZONE_KIND.get(k, 0)] for x, z, r, k in zones])
+                else:
+                    pts += [[round(x), round(z)] for x, z, _, _ in zones]
+        if areas or pts:
             key = re.sub(r"^Ambient", "", name)
             label, ic = ANIMALS.get(key, (humanize(key), "paw"))
             prev = next((o for o in out if o["n"] == label), None)
-            (prev["z"].extend(zs) if prev else out.append({"n": label, "i": ic, "c": name, "z": zs}))
-    return out, zone_types
+            if prev:
+                prev["areas"] += areas; prev["pts"] += pts
+            else:
+                out.append({"n": label, "i": ic, "c": name, "herd": herd, "areas": areas, "pts": pts})
+    return out
+
+
+ZONE_KIND = {"graze": 0, "huntingground": 0, "rest": 1, "water": 2}   # zone kinds, index into app's ZONE_NAMES
+
+
+def layer_label(lid, label, events):
+    """Name the supplies layer after what this map actually spawns (Chernarus: planks only; Nasdara: bricks only)."""
+    if lid == "supplies":
+        have = {e["cls"] for e in events}
+        if have == {"ItemPlanks"}:
+            return "Planks"
+        if have == {"ItemBricks"}:
+            return "Bricks"
+    return label
 
 
 def main():
@@ -401,10 +470,10 @@ def main():
                 kinds.append(k)
             x, _y, z = (float(v) for v in g.get("pos").split())
             (fruit if f else berries).append([round(x), round(z), kinds.index(k)])
-    animals, animal_zones = territories(m)
+    animals = territories(m)
     flat = lambda pts: [v for p in pts for v in p]
     world = {"wells": flat(wells), "waterKinds": [k for k, _ in WATER], "fruit": flat(fruit), "berries": flat(berries), "kinds": kinds,
-             "animals": animals, "animalZones": animal_zones}
+             "animals": animals}
     with open(os.path.join(out, "world.json"), "w", encoding="utf-8") as f:
         json.dump(world, f, separators=(",", ":"))
 
@@ -413,8 +482,9 @@ def main():
         with open(a.configs, encoding="utf-8") as f:
             allp = json.load(f).get("places", {})
         world = next((v for k, v in allp.items() if k.lower() == a.world.lower()), [])
-        rank = {"NameCityCapital": 0, "NameCity": 1, "NameVillage": 2, "Airport": 2, "NameLocal": 3, "NameMarine": 3, "Hill": 4}
-        places = [[p["n"], rank.get(p["t"], 3), p["x"], p["z"]] for p in world if p["t"] in rank and p["t"] != "Hill"]
+        rank = {"NameCityCapital": 0, "Capital": 0, "NameCity": 1, "City": 1, "NameVillage": 2, "Village": 2, "Airport": 2,
+                "NameLocal": 3, "Local": 3, "NameMarine": 3, "Marine": 3, "Camp": 3, "Ruin": 3}
+        places = [[latin(p["n"]), rank[p["t"]], p["x"], p["z"]] for p in world if p["t"] in rank]
 
     data = {
         "id": a.id, "places": places, "name": a.name, "size": size, "limits": lim,
@@ -422,8 +492,8 @@ def main():
         "lootTypes": [[k, label] for k, label, _ in LOOT_TYPES],
         "tiers": shapes, "tierLabels": tier_labels,
         "world": {"wells": len(wells), "fruit": len(fruit), "berries": len(berries),
-                  "animals": [[a["n"], len(a["z"]), a["i"]] for a in animals]},
-        "items": items, "events": layers, "eventLayers": [[l, label] for l, label, _ in EVENT_LAYERS if l in layers],
+                  "animals": [[a["n"], len(a["areas"]) or len(a["pts"]), a["i"]] for a in animals]},
+        "items": items, "events": layers, "eventLayers": [[l, layer_label(l, label, layers[l])] for l, label, _ in EVENT_LAYERS if l in layers],
         "zoneTypes": ztypes, "zones": zones, "gas": gas, "spawns": fresh,
         "overlays": {"tiergrid": "tiergrid.png", "water": water},
     }
@@ -432,7 +502,7 @@ def main():
     print(f"{a.id}: {len(bx)} buildings, {len(groups)} building types, {len(items)} items,",
           {k: sum(len(e['p']) for e in v) for k, v in layers.items()}, f"{len(zones)} infected areas, {len(gas)} gas zones,",
           f"{len(fresh)} spawns, {len(wells)} wells, {len(fruit)} fruit trees, {len(berries)} bushes,",
-          f"animals {[(a['n'], len(a['z'])) for a in animals]}, tier polygons {[(t, len(p)) for t, p in shapes.items()]}, {len(tier_labels)} tier labels")
+          f"animals {[(a['n'], len(a['areas']) or len(a['pts'])) for a in animals]}, tier polygons {[(t, len(p)) for t, p in shapes.items()]}, {len(tier_labels)} tier labels")
 
 
 if __name__ == "__main__":

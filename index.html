@@ -17,17 +17,25 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <header class="top">
-    <a class="logo" href="https://purez.gg" aria-label="PureZ">Pure<span>Z</span><em>Map</em></a>
-    <label class="pick"><span class="sr">Map</span><select id="map-pick" aria-label="Map"></select></label>
+  <header class="nav">
+    <a href="https://purez.gg" class="logo" aria-label="PureZ home">Pure<span>Z</span><em>Map</em></a>
     <div class="search" role="search">
       <input id="q" type="search" placeholder="Find an item, building or vehicle" autocomplete="off" spellcheck="false" aria-label="Find an item, building or vehicle">
       <kbd class="hint">/</kbd>
       <ul id="results" role="listbox" hidden></ul>
     </div>
-    <a class="out" href="https://wiki.purez.gg">Wiki</a>
+    <nav aria-label="Main">
+      <a href="https://purez.gg/#servers">Servers</a>
+      <a href="https://purez.gg/#features">Features</a>
+      <a href="https://wiki.purez.gg">Wiki</a>
+      <a href="https://map.purez.gg" aria-current="page">Map</a>
+      <a href="https://purez.gg/#play">Play</a>
+    </nav>
+    <a href="https://discord.gg/JES5Wpkpe5" class="btn" target="_blank" rel="noopener">Join our Discord</a>
     <button class="panel-toggle" type="button" aria-controls="panel" aria-expanded="false">Layers</button>
   </header>
+
+  <div id="map-pick-wrap" class="pick leaflet-control"><label><span class="sr">Map</span><select id="map-pick" aria-label="Map"></select></label></div>
 
   <div id="map" aria-label="Map"></div>
 

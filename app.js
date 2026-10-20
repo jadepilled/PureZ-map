@@ -46,6 +46,7 @@
     spawns: { icon: "user", shape: "circle", tone: "#f2f2f2", badge: 3 },
     wells: { icon: "droplet", shape: "circle", tone: "#4ea1ff", badge: 3 },
     animalPts: { shape: "circle", tone: "#d8b36a", badge: 4.5 },
+    animalHerds: { shape: "circle", tone: "#d8b36a", badge: 2.5 },
     fruit: { icon: "apple", shape: "dot", tone: "#7cc464", badge: 7 },
     berries: { icon: "cherry", shape: "dot", tone: "#b48ae6", badge: 7 },
   };
@@ -53,7 +54,7 @@
     infected: { color: "#e66767", icon: "skull", width: 1, alpha: 0.55, fill: 0.05 },
     gas: { color: "#8bd450", icon: "biohazard", width: 1.5, alpha: 0.9, fill: 0.18 },
     gasevent: { color: "#8bd450", icon: "biohazard", width: 1.5, alpha: 0.85, fill: 0.08, dash: [6, 5] },
-    animals: { color: "#d8b36a", icon: "paw", width: 1, alpha: 0.75, fill: 0.06 },
+    animals: { color: "#d8b36a", icon: "paw", width: 1.25, alpha: 0.8, fill: 0.08 },
   };
   const SPAWN_ORDER = ["vehicles", "helicrash", "convoy", "police", "watertruck", "containers", "crates", "trains", "supplies", "gasevent", "spawns"];
   const WORLD_ORDER = ["wells", "fruit", "berries", "animals", "infected", "gas"];
@@ -69,7 +70,7 @@
     return KID_NAMES[head] || cap(t.replace(/_/g, " "));
   };
   const eventLabel = (lid, ev) => ev.type || [...new Set(ev.kids.map(kidName))].join(" / ") || cap(ev.cls.replace(/^Static/, "").replace(/([a-z])([A-Z])/g, "$1 $2"));
-  const MARKER_COLORS = ["#f2f2f2", "#ff4545", "#3987e5", "#c98500", "#199e70"];
+  const MARKER_COLORS = ["#f2f2f2", "#ff4545", "#ff8a3d", "#f2c94c", "#199e70", "#3987e5", "#9085e9", "#d55181", "#8c8c8c"];
   const MARKER_ICONS = ["map-pin", "home", "car", "key", "tent", "package", "flag", "star", "crosshair", "skull",
                         "droplet", "first-aid-kit", "campfire", "alert-triangle", "eye", "building-warehouse"];
 
@@ -225,7 +226,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (state.grid) drawGrid(ctx, v);
       if (state.layers.has("buildings") || state.hits) drawSet(ctx, v, sets.buildings);
-      for (const k2 of ["fruit", "berries", "wells", "animalPts"]) if (state.layers.has(k2 === "animalPts" ? "animals" : k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
+      for (const k2 of ["fruit", "berries", "wells", "animalPts", "animalHerds"]) if (state.layers.has(k2.startsWith("animal") ? "animals" : k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
       for (const k2 of SPAWN_ORDER) if (state.layers.has(k2) && sets[k2]) drawSet(ctx, v, sets[k2]);
     },
   });
@@ -334,6 +335,8 @@
   }
 
   function drawGrid(ctx, v) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(v.ox, v.oy, v.S * v.k, v.S * v.k); ctx.clip();   // never outside the map
     const step = 100 * v.k >= 36 ? 100 : 1000;
     ctx.lineWidth = 1; ctx.font = "600 10px Barlow, sans-serif";
     const label = 1000 * v.k >= 60;
@@ -341,14 +344,15 @@
       const px = Math.round(v.ox + m * v.k) + 0.5;
       ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.07)";
       ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, v.h); ctx.stroke();
-      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), px + 3, 12); }
+      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), px + 3, Math.max(12, v.oy + 12)); }
     }
     for (let m = Math.max(0, Math.ceil(v.zBot / step) * step); m <= Math.min(v.S, v.zTop); m += step) {
       const py = Math.round(v.oy + (v.S - m) * v.k) + 0.5;
       ctx.strokeStyle = m % 1000 === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.07)";
       ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(v.w, py); ctx.stroke();
-      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), 4, py - 4); }
+      if (label && m % 1000 === 0) { ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.fillText(String(m / 1000).padStart(2, "0"), Math.max(4, v.ox + 4), py - 4); }
     }
+    ctx.restore();
   }
 
   // Circle areas: [x, z, r, label, extra]; paths are built once in world units
@@ -362,7 +366,8 @@
           if (key === null) return;
           let e = g.get(key);
           if (!e) g.set(key, (e = { p: new Path2D(), dash: it.dash }));
-          e.p.moveTo(it.x + it.r, it.z); e.p.arc(it.x, it.z, it.r, 0, Math.PI * 2);
+          if (it.ring) { it.ring.forEach(([x, z], j) => (j ? e.p.lineTo(x, z) : e.p.moveTo(x, z))); e.p.closePath(); }
+          else { e.p.moveTo(it.x + it.r, it.z); e.p.arc(it.x, it.z, it.r, 0, Math.PI * 2); }
         });
         this._paths = [...g.values()];
       }
@@ -373,12 +378,24 @@
       let best = null;
       for (const it of this.items) {
         if (this.groupOf(it) === null) continue;
+        if (it.ring) { if (inRing(it.ring, x, z) && (!best || it.r < best.r)) best = it; continue; }
         const d = Math.hypot(it.x - x, it.z - z);
         if (d <= it.r && (!best || it.r < best.r)) best = it;
       }
       return best;
     }
   }
+
+  function inRing(ring, x, z) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, zi] = ring[i], [xj, zj] = ring[j];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const ringCentre = (ring) => ring.reduce((c, [x, z]) => [c[0] + x / ring.length, c[1] + z / ring.length], [0, 0]);
+  const ZONE_NAMES = ["grazing zone", "resting zone", "watering zone"];
 
   function buildAreas(lid) {
     if (areas[lid]) return areas[lid];
@@ -391,9 +408,10 @@
     } else if (lid === "gasevent") {
       areas.gasevent = new AreaSet((D.events.gasevent || []).flatMap((ev) => ev.p.map(([x, z]) => ({ x, z, r: ev.r || 75, label: "Random gas zone", ev }))));
     } else if (lid === "animals") {
-      areas.animals = new AreaSet(W.animals.flatMap((a) => a.z.map(([x, z, r, t]) => ({
-        x, z, r, species: a.n, label: zoneLabel(a.n, W.animalZones[t]), dash: /rest/i.test(W.animalZones[t]) ? [3, 4] : null }))),
-        (it) => (isOff("animals", it.species) ? null : it.dash ? "rest" : "zone"));
+      // one circle per zone a herd uses; zones of one territory share a badge at their centre
+      areas.animals = new AreaSet(W.animals.flatMap((a) => a.areas.flatMap((zones) => zones.map(([x, z, r, k]) => ({
+        x, z, r, species: a.n, label: `${a.n} · ${ZONE_NAMES[k] || "zone"}` })))),
+        (it) => (isOff("animals", it.species) ? null : "herd"));
     }
     return areas[lid];
   }
@@ -481,6 +499,7 @@
                          zoomAnimation: false, attributionControl: false, zoomControl: false, inertiaDeceleration: 2600,
                          maxBounds: [[-S * 0.25, -S * 0.25], [S * 1.25, S * 1.25]], doubleClickZoom: false, tapHold: true });
     zoomButtons().addTo(map);
+    map.getContainer().querySelector(".leaflet-top.leaflet-right").prepend($("#map-pick-wrap"));
     const bounds = [[0, 0], [S, S]];
     fitAll();
     map.createPane("base").style.zIndex = 150;
@@ -566,13 +585,22 @@
       for (let i = 0; i < a.length; i += 3) { xs.push(a[i]); zs.push(a[i + 1]); kind.push(a[i + 2]); }
       sets[k] = new PointSet(xs, zs, (i, z) => (isOff(k, names[kind[i]]) ? null : stylePlain(k, z)), { kind, names, uniform: true });
     }
-    // one symbol per animal zone, from mid zoom; rest zones are shown by their circle alone
-    const xs = [], zs = [], sp = [];
-    W.animals.forEach((a, ai) => a.z.forEach(([x, z, , t]) => { if (!/rest/i.test(W.animalZones[t])) { xs.push(x); zs.push(z); sp.push(ai); } }));
+    // herds: one species badge per territory; ambient life (hares, hens, foxes): a point per spawn zone
+    const hx = [], hz = [], hs = [], xs = [], zs = [], sp = [];
+    W.animals.forEach((a, ai) => {
+      a.areas.forEach((zones) => { const [x, z] = ringCentre(zones); hx.push(x); hz.push(z); hs.push(ai); });
+      a.pts.forEach(([x, z]) => { xs.push(x); zs.push(z); sp.push(ai); });
+    });
+    sets.animalHerds = new PointSet(hx, hz, (i, z) => {
+      const a = W.animals[hs[i]];
+      if (isOff("animals", a.n) || z < POINTS.animalHerds.badge) return null;
+      return { icon: a.i, r: badgeR(z), color: "#f2f2f2", ring: POINTS.animalHerds.tone };
+    }, { species: hs });
     sets.animalPts = new PointSet(xs, zs, (i, z) => {
       const a = W.animals[sp[i]];
-      if (isOff("animals", a.n) || z < POINTS.animalPts.badge) return null;
-      return { icon: a.i, r: badgeR(z) * 0.95, color: "#f2f2f2", ring: POINTS.animalPts.tone };
+      if (isOff("animals", a.n) || z < 3) return null;   // ambient life is everywhere: only worth showing close up
+      if (z >= POINTS.animalPts.badge) return { icon: a.i, r: badgeR(z) * 0.85, color: "#f2f2f2", ring: POINTS.animalPts.tone };
+      return { shape: "circle", r: sizeAt(z, [1, 1.3, 1.8, 2.4, 3, 3, 3, 3]), color: POINTS.animalPts.tone, a: 0.85, outline: 1 };
     }, { species: sp });
   }
   async function loadWorld() {
@@ -656,13 +684,6 @@
   function stylePlaces() {
     const z = map.getZoom(), el = $("#map");
     for (let r = 0; r <= 3; r++) el.classList.toggle(`hide-r${r}`, z < [0, 1.5, 3, 4.5][r]);
-  }
-
-  // "HuntingGround" -> "Wolves · hunting ground"; generic names like "zone_hen" add nothing
-  function zoneLabel(species, zone) {
-    const z = zone.replace(/^zone_?/i, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase().trim();
-    const generic = !z || /^zone_/i.test(zone);
-    return generic ? species : `${species} · ${z}`;
   }
 
   // ------------------------------------------------------------------ panel
@@ -866,8 +887,8 @@
 
   // ------------------------------------------------------------------ hover, click, popups
   function hitTest(latlng) {
-    for (const k of [...SPAWN_ORDER, "wells", "animalPts", "fruit", "berries"]) {
-      if (!state.layers.has(k === "animalPts" ? "animals" : k) || !sets[k]) continue;
+    for (const k of [...SPAWN_ORDER, "wells", "animalHerds", "animalPts", "fruit", "berries"]) {
+      if (!state.layers.has(k.startsWith("animal") ? "animals" : k) || !sets[k]) continue;
       const i = sets[k].hit(latlng);
       if (i >= 0) return { k, i };
     }
@@ -893,6 +914,7 @@
     if (k === "spawns") return "Player spawn";
     if (k === "wells") return sets.wells.names[sets.wells.kind[i]];
     if (k === "animalPts") return W.animals[sets.animalPts.species[i]].n;
+    if (k === "animalHerds") return `${W.animals[sets.animalHerds.species[i]].n} territory`;
     return W.kinds[sets[k].kind[i]] + (k === "fruit" ? " tree" : " bush");
   }
   function hitPos({ i, k, a }, cursor) { return a ? cursor : ll(sets[k].xs[i], sets[k].zs[i]); }
@@ -1125,7 +1147,10 @@
     list.forEach((m, i) => {
       const mk = L.marker(ll(m.x, m.z), { icon: markerIcon(m), draggable: !m.k, keyboard: true, title: m.l || "Marker", riseOnHover: true })
         .addTo(layers.markers)
-        .on("click", (e) => { if (!tool) markerPopup(i, e.latlng); })
+        .on("click", (e) => {
+          if (tool === "measure") { L.DomEvent.stop(e.originalEvent); addMeasurePoint(mk.getLatLng()); }
+          else if (!tool) markerPopup(i, e.latlng);
+        })
         .on("contextmenu", (e) => { L.DomEvent.stop(e.originalEvent); hideHover(); markerContext(i, e); })
         .on("dragend", (e) => {
           const l = loadMarkers(), p = e.target.getLatLng();
@@ -1229,6 +1254,7 @@
   async function boot() {
     maps = await (await fetch("maps.json")).json();
     const pick = $("#map-pick");
+    L.DomEvent.disableClickPropagation($("#map-pick-wrap"));
     pick.replaceChildren(...maps.map((m) => new Option(m.name, m.id)));
     pick.onchange = () => {
       if (pick.value === cfg.id) return;
