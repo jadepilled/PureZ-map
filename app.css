@@ -53,13 +53,22 @@ kbd { font-family: var(--mono); font-size: 0.75rem; }
 }
 .btn:hover, .btn:focus-visible { background: var(--red-hi); }
 .search { position: relative; flex: 1; max-width: 460px; min-width: 140px; }
-.search input { width: 100%; height: 36px; padding: 0 2rem 0 0.8rem; background: var(--raise); border: 1px solid var(--line); border-radius: 0; color: var(--white); }
-.search input:focus { outline: none; border-color: #4a4a4a; }
-.search .hint { position: absolute; right: 0.55rem; top: 50%; transform: translateY(-50%); color: var(--muted); border: 1px solid var(--line); padding: 0 0.3rem; }
-#results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; list-style: none; background: #111; border: 1px solid #2c2c2c; max-height: 60vh; overflow: auto; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
-#results li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.45rem 0.8rem; cursor: pointer; }
+.search input {
+  width: 100%; height: 38px; padding: 0 2.2rem 0 0.9rem;
+  background: var(--panel); color: var(--white);
+  border: 1px solid var(--line); border-radius: 0;
+  font: 400 0.95rem var(--body);
+}
+.search input:focus { outline: none; border-color: #444; }
+.search .hint { position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%); color: var(--muted); border: 1px solid var(--line); padding: 0 0.35rem; font-size: 0.75rem; }
+#results {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  list-style: none; background: #111; border: 1px solid #2a2a2a;
+  max-height: 60vh; overflow: auto;
+}
+#results li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.9rem; cursor: pointer; }
 #results li small { color: var(--muted); white-space: nowrap; }
-#results li[aria-selected="true"], #results li:hover { background: #1c1c1c; }
+#results li[aria-selected="true"], #results li:hover { background: #1b1b1b; }
 #results li[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--red-hi); }
 .panel-toggle { display: none; background: var(--raise); border: 1px solid var(--line); padding: 0.35rem 0.7rem; }
 

@@ -1051,6 +1051,14 @@
   function closeContext() { $("#ctx").hidden = true; }
 
   // ------------------------------------------------------------------ search
+  const PLACE_KINDS = ["City", "City", "Village", "Local", "Marine", "Camp", "Ruin"];
+  function goToPlace(name, x, z) {
+    const target = ll(x, z);
+    map.smoothZoom.flyTo(target, Math.max(map.getZoom(), 4.5));
+    map.closePopup();
+    L.popup({ className: "pop", autoPan: false, closeButton: true }).setLatLng(target)
+      .setContent(`<h3>${esc(name)}</h3><p class="kv"><span>X</span><span>${Math.round(x)}</span><span>Z</span><span>${Math.round(z)}</span></p>`).openOn(map);
+  }
   function searchIndex() {
     if (cache[`idx-${cfg.id}`]) return cache[`idx-${cfg.id}`];
     const counts = {};
@@ -1059,6 +1067,7 @@
       ...D.items.map((it) => ({ t: it.n, c: [it.c, ...(it.vars || []).map((v) => v[0])].join(" "), k: cap(D.limits.categories[it.r[0][2]]), go: () => selectItem(it) })),
       ...(D.events.vehicles || []).map((ev) => ({ t: ev.type, c: [ev.cls, ...ev.kids].join(" "), k: `Vehicle · ${ev.p.length} spots`, go: () => selectVehicle(ev.cls) })),
       ...D.groups.map((g, gi) => counts[gi] && { t: g.n, c: g.cls, k: `Building · ${counts[gi]}`, go: () => selectType(gi) }).filter(Boolean),
+      ...(D.places || []).map(([n, rank, x, z]) => ({ t: n, c: n, k: PLACE_KINDS[rank] || "Place", go: () => goToPlace(n, x, z) })),
     ];
     return (cache[`idx-${cfg.id}`] = idx);
   }
