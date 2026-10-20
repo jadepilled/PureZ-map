@@ -35,7 +35,6 @@
     <button class="panel-toggle" type="button" aria-controls="panel" aria-expanded="false">Layers</button>
   </header>
 
-  <div id="map-pick-wrap" class="pick leaflet-control"><label><span class="sr">Map</span><select id="map-pick" aria-label="Map"></select></label></div>
 
   <div id="map" aria-label="Map"></div>
 
@@ -43,6 +42,7 @@
     <section id="lookup" class="card" hidden></section>
 
     <section class="sec">
+      <label class="pick"><span class="sr">Map</span><select id="map-pick" aria-label="Map"></select></label>
       <div class="base-row">
         <div class="seg" id="base" role="group" aria-label="Base map"></div>
         <button type="button" class="tog" id="grid-toggle" aria-pressed="false" title="Grid">Grid</button>

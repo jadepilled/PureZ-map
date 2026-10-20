@@ -70,10 +70,7 @@ kbd { font-family: var(--mono); font-size: 0.75rem; }
 body.tool-active #map { cursor: crosshair; }
 .leaflet-container { background: #0d0f10; font: inherit; }
 .leaflet-control-zoom { border: 1px solid var(--line) !important; border-radius: 0 !important; margin: 12px 12px 0 0 !important; }
-.pick { position: relative; display: block; margin: 12px 12px 0 0 !important; }
-.pick select { appearance: none; height: 34px; padding: 0 2rem 0 0.8rem; background: var(--panel); border: 1px solid var(--line); color: var(--white); font-weight: 500; cursor: pointer; }
-.pick select:hover { border-color: var(--line-hi); }
-.pick::after { content: ""; position: absolute; right: 0.8rem; top: 50%; width: 6px; height: 6px; border: solid var(--grey); border-width: 0 1.5px 1.5px 0; transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+
 .leaflet-control-zoom a { background: var(--panel) !important; color: var(--white) !important; border-color: var(--line) !important; border-radius: 0 !important; }
 .leaflet-tooltip { background: #111; color: var(--white); border: 1px solid #2c2c2c; border-radius: 0; box-shadow: none; padding: 0.25rem 0.5rem; font: 500 0.85rem var(--body); }
 .leaflet-tooltip::before { display: none; }
@@ -120,6 +117,10 @@ body.tool-active #map { cursor: crosshair; }
 .row .row-ic { width: 15px; height: 15px; color: var(--grey); }
 .row input:checked ~ .row-ic { color: var(--white); }
 .row .n { margin-left: auto; color: var(--muted); font-weight: 500; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.pick { position: relative; display: block; margin-bottom: 6px; }
+.pick select { appearance: none; width: 100%; padding: 0.36rem 2rem 0.36rem 0.8rem; background: none; border: 1px solid var(--line); color: var(--white); font-weight: 500; cursor: pointer; box-shadow: inset 0 -2px 0 var(--red); }
+.pick select:hover { border-color: var(--line-hi); }
+.pick::after { content: ""; position: absolute; right: 0.8rem; top: 50%; width: 6px; height: 6px; border: solid var(--grey); border-width: 0 1.5px 1.5px 0; transform: translateY(-70%) rotate(45deg); pointer-events: none; }
 .base-row { display: flex; gap: 6px; }
 .seg { display: flex; flex: 1; border: 1px solid var(--line); }
 .seg button { flex: 1; background: none; border: 0; padding: 0.36rem 0.3rem; color: var(--grey); font-weight: 500; }
@@ -239,6 +240,5 @@ button.chip[aria-pressed="false"] .sw { background: none !important; box-shadow:
   .panel.open { transform: none; }
   .readout { left: 10px; bottom: 10px; }
   .leaflet-control-zoom { display: none; }
-  .pick { margin: 10px 10px 0 0 !important; }
 }
 @media (prefers-reduced-motion: reduce) { .panel, .sec > summary::after { transition: none; } }

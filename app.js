@@ -499,7 +499,6 @@
                          zoomAnimation: false, attributionControl: false, zoomControl: false, inertiaDeceleration: 2600,
                          maxBounds: [[-S * 0.25, -S * 0.25], [S * 1.25, S * 1.25]], doubleClickZoom: false, tapHold: true });
     zoomButtons().addTo(map);
-    map.getContainer().querySelector(".leaflet-top.leaflet-right").prepend($("#map-pick-wrap"));
     const bounds = [[0, 0], [S, S]];
     fitAll();
     map.createPane("base").style.zIndex = 150;
@@ -1254,7 +1253,6 @@
   async function boot() {
     maps = await (await fetch("maps.json")).json();
     const pick = $("#map-pick");
-    L.DomEvent.disableClickPropagation($("#map-pick-wrap"));
     pick.replaceChildren(...maps.map((m) => new Option(m.name, m.id)));
     pick.onchange = () => {
       if (pick.value === cfg.id) return;
