@@ -251,3 +251,10 @@ button.chip[aria-pressed="false"] .sw { background: none !important; box-shadow:
   .leaflet-control-zoom { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .panel, .sec > summary::after { transition: none; } }
+
+/* Search groups and wiki-linked titles */
+#results .grp { padding: 0.45rem 0.9rem 0.1rem; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); cursor: default; }
+#results .grp:not(:first-child) { border-top: 1px solid var(--line); margin-top: 0.2rem; }
+.pop h4 a.wl, .pop h3 a.wl { color: inherit; text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--grey); text-underline-offset: 3px; }
+.pop h4 a.wl:hover, .pop h3 a.wl:hover { text-decoration-style: solid; text-decoration-color: var(--red-hi); }
+.leaflet-tooltip.place { pointer-events: auto; cursor: pointer; }

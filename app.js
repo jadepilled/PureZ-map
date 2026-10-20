@@ -75,6 +75,7 @@
                         "droplet", "first-aid-kit", "campfire", "alert-triangle", "eye", "building-warehouse"];
 
   let groupPts = [];
+  const WIKI = "https://wiki.purez.gg";
   let maps = [], cfg = null, D = null, W = null, map = null, layers = {}, sets = {}, areas = {}, state = {}, wiki = null, tierGrid = null;
   const cache = {};
 
@@ -535,8 +536,8 @@
 
     // place names: capitals and cities always, villages and locals as you zoom in
     layers.places = L.layerGroup((D.places || []).map(([n, rank, x, z]) =>
-      L.tooltip({ permanent: true, direction: "center", className: `place r${rank}`, interactive: false })
-        .setLatLng(ll(x, z)).setContent(esc(n))));
+      L.tooltip({ permanent: true, direction: "center", className: `place r${rank}`, interactive: true })
+        .setLatLng(ll(x, z)).setContent(esc(n)).on("click", () => !tool && goToPlace(n, x, z))));
     if (D.places && D.places.length) layers.places.addTo(map);
 
     layers.scene = new Scene().addTo(map);
@@ -868,7 +869,7 @@
         ${bits(itemMask(it, 0), D.limits.usages).map((u) => `<span class="chip">${esc(u.replace(/([a-z])([A-Z])/g, "$1 $2"))}</span>`).join("")}</div>
         <dl class="facts"><div><dt>On the map</dt><dd>${fmt(it.q)}</dd></div><div><dt>Buildings</dt><dd>${fmt(nb)}</dd></div>
         <div><dt>Loot points</dt><dd>${fmt(pts)}</dd></div><div><dt>Category</dt><dd>${esc(cats)}</dd></div></dl>
-        ${page ? `<a class="wiki-link" href="https://wiki.purez.gg${page.u}" target="_blank" rel="noopener">Wiki page</a>` : ""}`;
+        ${page ? `<a class="wiki-link" href="${WIKI}${page.u}" target="_blank" rel="noopener">Wiki page</a>` : ""}`;
     } else {
       const g = D.groups[state.type];
       html = `<div class="card-head"><h3>${esc(g.n)}</h3><button type="button" class="x" data-clear aria-label="Clear">${icon("x")}</button></div>
@@ -920,6 +921,8 @@
 
   let moveRaf = 0, lastMove = null;
   function onMove(e) {
+    const t = e.originalEvent && e.originalEvent.target;
+    if (t && t.closest && t.closest(".leaflet-popup, .leaflet-control")) return hideHover();   // the popup covers the map
     lastMove = e.latlng;
     if (moveRaf) return;
     moveRaf = requestAnimationFrame(() => {
@@ -978,10 +981,14 @@
       <ul>${items.map(([it, p]) => `<li data-item="${esc(it.c)}"><span>${esc(it.n)}<code>${esc(it.c)}</code></span><small>${p} pts</small></li>`).join("")}</ul></div>` : ""}
       ${coordsHtml(B.x[i], B.z[i])}</div>`);
   }
+  // Title text linking to the wiki article when there is one
+  function wikiPage(pred) { const w = wiki && wiki.find(pred); return w ? `${WIKI}${w.u}` : null; }
+  function titled(text, url) { return url ? `<a class="wl" href="${url}" target="_blank" rel="noopener" title="Open the wiki page">${esc(text)}</a>` : esc(text); }
   function eventPopup(lid, ev, latlng) {
     const label = ev.type || D.eventLayers.find((l) => l[0] === lid)[1];
+    const page = lid === "vehicles" ? wikiPage((w) => w.c === ev.cls || ev.kids.includes(w.c)) : null;
     const kids = ev.kids.length ? `<div class="list"><p class="sub">Spawns as</p><div class="classes">${ev.kids.map(clsHtml).join("")}</div></div>` : "";
-    popup(latlng, `<div class="pop"><h4>${esc(label)}</h4>${clsHtml(ev.cls)}
+    popup(latlng, `<div class="pop"><h4>${titled(label, page)}</h4>${clsHtml(ev.cls)}
       <dl class="kv"><dt>${lid === "gasevent" ? "Active at once" : "On the map"}</dt><dd>${fmt(ev.count)}</dd><dt>Possible spots</dt><dd>${fmt(ev.p.length)}</dd>
       ${ev.r ? `<dt>Radius</dt><dd>${ev.r} m</dd>` : ""}</dl>${kids}
       ${coordsHtml(latlng.lng, latlng.lat)}</div>`);
@@ -1056,20 +1063,36 @@
     const target = ll(x, z);
     map.smoothZoom.flyTo(target, Math.max(map.getZoom(), 4.5));
     map.closePopup();
+    const page = wikiPage((w) => w.t === name && w.u.startsWith(`/locations/${cfg.id}/`));
     L.popup({ className: "pop", autoPan: false, closeButton: true }).setLatLng(target)
-      .setContent(`<h3>${esc(name)}</h3><p class="kv"><span>X</span><span>${Math.round(x)}</span><span>Z</span><span>${Math.round(z)}</span></p>`).openOn(map);
+      .setContent(`<h3>${titled(name, page)}</h3><p class="kv"><span>X</span><span>${Math.round(x)}</span><span>Z</span><span>${Math.round(z)}</span></p>`).openOn(map);
   }
   function searchIndex() {
     if (cache[`idx-${cfg.id}`]) return cache[`idx-${cfg.id}`];
     const counts = {};
     D.buildings.g.forEach((g) => (counts[g] = (counts[g] || 0) + 1));
     const idx = [
-      ...D.items.map((it) => ({ t: it.n, c: [it.c, ...(it.vars || []).map((v) => v[0])].join(" "), k: cap(D.limits.categories[it.r[0][2]]), go: () => selectItem(it) })),
-      ...(D.events.vehicles || []).map((ev) => ({ t: ev.type, c: [ev.cls, ...ev.kids].join(" "), k: `Vehicle · ${ev.p.length} spots`, go: () => selectVehicle(ev.cls) })),
-      ...D.groups.map((g, gi) => counts[gi] && { t: g.n, c: g.cls, k: `Building · ${counts[gi]}`, go: () => selectType(gi) }).filter(Boolean),
-      ...(D.places || []).map(([n, rank, x, z]) => ({ t: n, c: n, k: PLACE_KINDS[rank] || "Place", go: () => goToPlace(n, x, z) })),
+      ...D.items.map((it) => ({ t: it.n, c: [it.c, ...(it.vars || []).map((v) => v[0])].join(" "), g: "Items", k: cap(D.limits.categories[it.r[0][2]]), go: () => selectItem(it) })),
+      ...(D.events.vehicles || []).map((ev) => ({ t: ev.type, c: [ev.cls, ...ev.kids].join(" "), g: "Vehicles", k: `${ev.p.length} spots`, go: () => selectVehicle(ev.cls) })),
+      ...D.groups.map((g, gi) => counts[gi] && { t: g.n, c: g.cls, g: "Buildings", k: `${fmt(counts[gi])} on the map`, go: () => selectType(gi) }).filter(Boolean),
+      ...(D.places || []).map(([n, rank, x, z]) => ({ t: n, c: n, g: PLACE_KINDS[rank] || "Place", k: "", go: () => goToPlace(n, x, z) })),
     ];
     return (cache[`idx-${cfg.id}`] = idx);
+  }
+  // Exact and prefix matches on the name first, then word starts, class names and substrings; capitals and cities ahead of local names
+  const GROUP_RANK = { Capital: 16, City: 14, Village: 9, Vehicles: 8, Buildings: 6, Marine: 4, Camp: 4, Ruin: 4, Local: 3, "Local name": 3, Items: 2 };
+  function searchScore(e, terms) {
+    const t = e.t.toLowerCase(), c = e.c.toLowerCase();
+    let s = 0;
+    for (const w of terms) {
+      if (t === w) s += 100;
+      else if (t.startsWith(w)) s += 60;
+      else if (t.split(/[\s\-]+/).some((p) => p.startsWith(w))) s += 40;
+      else if (c.split(/[\s_\-]+/).some((p) => p.startsWith(w))) s += 25;
+      else if (t.includes(w) || c.includes(w)) s += 10;
+      else return null;
+    }
+    return s + (GROUP_RANK[e.g] || 0) - t.length / 40;
   }
   function setupSearch() {
     const q = $("#q"), res = $("#results");
@@ -1077,20 +1100,26 @@
     const render = () => {
       const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
       if (!terms.length) { res.hidden = true; return; }
-      hits = searchIndex().map((e) => {
-        const t = e.t.toLowerCase(), c = e.c.toLowerCase();
-        let s = 0;
-        for (const w of terms) {
-          if (t.startsWith(w) || c.startsWith(w)) s += 3;
-          else if (t.includes(` ${w}`) || c.includes(` ${w}`) || c.includes(`_${w}`)) s += 2;
-          else if (t.includes(w) || c.includes(w)) s += 1;
-          else return null;
+      const scored = searchIndex().map((e) => { const s = searchScore(e, terms); return s == null ? null : [s, e]; })
+        .filter(Boolean).sort((a, b) => b[0] - a[0]);
+      // grouped by kind, groups in order of their best hit, a few per group so one kind cannot crowd out the rest
+      const groups = new Map();
+      for (const [, e] of scored) {
+        if (!groups.has(e.g)) groups.set(e.g, []);
+        if (groups.get(e.g).length < 6) groups.get(e.g).push(e);
+      }
+      hits = []; let html = "";
+      for (const [g, list] of groups) {
+        if (hits.length >= 18) break;
+        html += `<li class="grp" aria-hidden="true">${esc(g)}</li>`;
+        for (const e of list) {
+          if (hits.length >= 18) break;
+          html += `<li role="option" aria-selected="${hits.length === 0}" data-i="${hits.length}"><span>${esc(e.t)}</span><small>${esc(e.k)}</small></li>`;
+          hits.push(e);
         }
-        return [s - t.length / 200, e];
-      }).filter(Boolean).sort((a, b) => b[0] - a[0]).slice(0, 14).map((x) => x[1]);
+      }
       sel = 0;
-      res.innerHTML = hits.length ? hits.map((e, i) => `<li role="option" aria-selected="${i === 0}" data-i="${i}"><span>${esc(e.t)}</span><small>${esc(e.k)}</small></li>`).join("")
-                                  : `<li aria-disabled="true"><span class="muted">No matches</span></li>`;
+      res.innerHTML = hits.length ? html : `<li aria-disabled="true"><span class="muted">No matches</span></li>`;
       $$("li[data-i]", res).forEach((li) => (li.onclick = () => pick(+li.dataset.i)));
       res.hidden = false;
     };
@@ -1270,7 +1299,7 @@
       loadMap(pick.value).then(() => { drawMarkers(); fitAll(); });
     };
     $("#hint").textContent = matchMedia("(pointer: coarse)").matches ? "Press and hold the map for coordinates." : "Right-click the map for coordinates.";
-    fetch("https://wiki.purez.gg/static/search.json").then((r) => r.json()).then((w) => (wiki = w)).catch(() => {});
+    fetch(`${WIKI}/static/search.json`).then((r) => r.json()).then((w) => (wiki = w)).catch(() => {});
     setupSearch();
     const toolIcons = { measure: ["ruler-2", "Measure"], marker: ["map-pin", "Marker"] };
     $$("[data-tool]").forEach((b) => {
